@@ -2,6 +2,45 @@
 
 A high-performance desktop application for visualizing MATSim simulation outputs (network and events).
 
+<table align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/screenshots/network-overview.png" width="100%" alt="Simulated vs. observed link volumes over the road network" /><br />
+      <sub>Simulated vs. observed link volumes across a full metro-area network</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/screenshots/vehicle-animation.png" width="100%" alt="Live vehicle animation over an intersection grid" /><br />
+      <sub>Frame-accurate vehicle animation, zoomed to street level</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/screenshots/person-trips.png" width="100%" alt="Per-person trip list with mode, times, and activities" /><br />
+      <sub>Clicking a vehicle shows its driver's full day of trips</sub>
+    </td>
+    <td width="50%" align="center">
+      <img src="assets/screenshots/person-route.png" width="100%" alt="Tracking an individual person's route on the map" /><br />
+      <sub>Tracing a selected person's route and activities on the map</sub>
+    </td>
+  </tr>
+</table>
+
+## Paper
+
+TAREEK-Vis was accepted as a demo paper at
+[ACM SIGSPATIAL 2026](https://sigspatial2026.sigspatial.org/):
+
+> Jalal Khalil, Arein Duaibes, Da Yan, and Virginia Sisiopiku. 2026.
+> **TAREEK-Vis: An Interactive Visualization Tool for Large-Scale MATSim
+> Traffic Simulations [Demo]**. In *Proceedings of The 34th ACM International
+> Conference on Advances in Geographic Information Systems (SIGSPATIAL '26)*.
+> ACM, New York, NY, USA.
+
+📄 [Read the paper (pre-publication version)](assets/tareek_vis_sigspatial2026_demo.pdf)
+
+This is the pre-publication version; the camera-ready copy will replace it
+here once available, along with the official ACM DOI link.
+
 ## Features
 
 - Load and visualize MATSim network files (nodes and links)
