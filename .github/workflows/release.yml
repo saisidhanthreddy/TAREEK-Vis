@@ -26,6 +26,7 @@ jobs:
             mingw-w64-ucrt-x86_64-qt6-tools
             mingw-w64-ucrt-x86_64-zlib
             mingw-w64-ucrt-x86_64-ninja
+            unzip
 
       - name: Configure
         shell: msys2 {0}
