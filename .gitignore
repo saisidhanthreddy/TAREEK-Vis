@@ -1,0 +1,10 @@
+/.claude
+/backup
+/build
+/inputs
+/build/ffmpeg
+/paper
+/dist
+/installer/Output
+/ffmpeg
+/docs

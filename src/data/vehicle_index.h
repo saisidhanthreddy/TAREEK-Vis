@@ -1,0 +1,190 @@
+#pragma once
+
+#include <cstdint>
+#include <vector>
+#include <unordered_map>
+#include <QString>
+#include "core/types.h"          // StringInterner
+#include "core/transit_types.h"
+
+namespace simvis {
+
+using VehicleId = uint32_t;
+using LinkId    = uint32_t;
+using TimeMs    = uint32_t;
+
+// A single segment of a vehicle's trip on one link
+struct VehicleSegment {
+    TimeMs enterTime;   // inclusive (milliseconds from sim start)
+    TimeMs leaveTime;   // exclusive
+    LinkId linkId;
+};
+static_assert(sizeof(VehicleSegment) == 12, "VehicleSegment must be 12 bytes");
+
+// Full trajectory for one vehicle: an ordered sequence of segments
+struct VehicleTrajectory {
+    std::vector<VehicleSegment> segments;
+};
+
+// One MATSim leg of a person's day (departure -> arrival)
+struct PersonTrip {
+    TimeMs departTimeMs;
+    TimeMs arriveTimeMs;      // UINT32_MAX = never arrived (stuck agent)
+    LinkId fromLinkId;
+    LinkId toLinkId;          // UINT32_MAX = unknown
+    uint32_t vehicleId;       // internal VehicleId + 1; 0 = teleported / no vehicle
+    uint16_t legModeId;       // index into legModeStrings_
+    uint16_t fromActTypeId;   // index into actTypeStrings_; UINT16_MAX = none (mid-journey leg)
+    uint16_t toActTypeId;     // UINT16_MAX = none
+    uint16_t flags;           // bit0: teleported, bit1: transit rider; rest reserved
+};
+static_assert(sizeof(PersonTrip) == 28, "PersonTrip must be 28 bytes");
+
+constexpr uint16_t TRIP_NO_ACT   = 0xFFFF;
+constexpr TimeMs   TRIP_NO_TIME  = 0xFFFFFFFF;
+constexpr LinkId   TRIP_NO_LINK  = 0xFFFFFFFF;
+constexpr uint16_t TRIP_FLAG_TELEPORTED    = 1 << 0;
+constexpr uint16_t TRIP_FLAG_TRANSIT_RIDER = 1 << 1;
+
+// Binary file header for .vidx v3 files (96 bytes: 6xu32 + 4xu64 + 2xu32 + 4xu64,
+// naturally packed — u64 fields land on 8-byte boundaries with no padding)
+struct VehicleIndexHeader {
+    uint32_t magic;                  // VIDX_FILE_MAGIC
+    uint32_t version;                // VIDX_FILE_VERSION
+    uint32_t vehicleCount;
+    uint32_t totalSegments;          // sum of all segments across all vehicles
+    uint32_t minTimeMs;
+    uint32_t maxTimeMs;
+    uint64_t trajectoryTableOffset;  // per-vehicle (offset, count) table
+    uint64_t segmentDataOffset;      // packed VehicleSegment data
+    uint64_t modeTableOffset;        // per-vehicle mode bytes (vehicleCount bytes)
+    uint64_t tripTableOffset;        // per-person (tripOffset, tripCount) table
+    uint32_t personCount;
+    uint32_t totalTrips;             // sum of all trips across all persons
+    uint64_t tripDataOffset;         // packed PersonTrip data
+    uint64_t vehicleDriverOffset;    // per-vehicle uint32 (personId+1, 0 = none)
+    uint64_t transitServiceOffset;   // uint32 count + TransitService records
+    uint64_t stringTablesOffset;     // 6 sequential StringInterner blobs
+};
+static_assert(sizeof(VehicleIndexHeader) == 96, "VehicleIndexHeader must be 96 bytes");
+
+constexpr uint32_t VIDX_FILE_MAGIC   = 0x56494458;  // "VIDX"
+constexpr uint32_t VIDX_FILE_VERSION = 3;
+
+// Pre-computed per-vehicle index for fast active-vehicle queries
+class VehicleIndex {
+public:
+    VehicleIndex() = default;
+
+    // Load from binary .vidx file (accepts current version only)
+    bool loadFile(const QString& path);
+
+    // Write to binary .vidx file
+    static bool writeFile(const QString& path, const VehicleIndex& index);
+
+    // Read just the version field from a .vidx file (0 on failure).
+    // Used by the cache-validity check to force re-preprocessing of old formats.
+    static uint32_t fileVersion(const QString& path);
+
+    // --- Queries ---
+
+    // Find the segment a vehicle is on at the given time.
+    // Returns nullptr if vehicle is not active at that time.
+    const VehicleSegment* segmentAt(VehicleId id, TimeMs time) const;
+
+    // Collect all vehicle IDs active at the given time into `out`.
+    // Clears `out` before filling.
+    void getActiveVehicles(TimeMs time, std::vector<VehicleId>& out) const;
+
+    // Get the full trajectory for a vehicle (empty if invalid id)
+    const VehicleTrajectory* trajectory(VehicleId id) const;
+
+    // --- Metadata ---
+    TimeMs minTime() const { return minTime_; }
+    TimeMs maxTime() const { return maxTime_; }
+    size_t vehicleCount() const { return vehicles_.size(); }
+    size_t personCount() const { return personTrips_.size(); }
+
+    // Convert seconds (float) to TimeMs
+    static TimeMs toTimeMs(float seconds) {
+        return static_cast<TimeMs>(seconds * 1000.0f + 0.5f);
+    }
+
+    // Convert TimeMs to seconds (float)
+    static float toSeconds(TimeMs ms) {
+        return static_cast<float>(ms) / 1000.0f;
+    }
+
+    // --- Transit classification ---
+    TransitMode getVehicleMode(VehicleId id) const;
+    bool isTransitVehicle(VehicleId id) const;
+
+    // --- Trip / person queries (v3) ---
+
+    // All legs of one person's day, in departure order (nullptr if invalid id)
+    const std::vector<PersonTrip>* personTrips(uint32_t personId) const;
+
+    // Driver of a vehicle: personId + 1, or 0 if unknown
+    uint32_t vehicleDriver(VehicleId id) const;
+
+    // Transit service info for a transit vehicle (nullptr if not a transit vehicle)
+    struct TransitService {
+        uint32_t vehicleId;
+        uint32_t lineStrId;   // index into transitLineStrings_
+        uint32_t routeStrId;  // index into transitRouteStrings_
+    };
+    const TransitService* transitServiceInfo(VehicleId id) const;
+
+    // Passengers aboard a vehicle at a given time (excludes nobody; caller
+    // subtracts the driver for transit vehicles if desired)
+    int passengersAboard(VehicleId id, TimeMs time) const;
+
+    // --- String lookups (empty string on invalid/sentinel id) ---
+    QString vehicleIdString(VehicleId id) const;
+    QString personIdString(uint32_t personId) const;
+    QString actTypeString(uint16_t id) const;
+    QString legModeString(uint16_t id) const;
+    QString transitLineString(uint32_t id) const;
+    QString transitRouteString(uint32_t id) const;
+
+    // --- Build interface (used by preprocessor / event parser) ---
+    std::vector<VehicleTrajectory> vehicles_;
+    std::vector<TimeMs> firstEnterTime_;  // per vehicle
+    std::vector<TimeMs> lastLeaveTime_;   // per vehicle
+    std::vector<uint8_t> vehicleModes_;   // per vehicle: 0=car, else TransitMode
+
+    std::vector<std::vector<PersonTrip>> personTrips_;  // per person
+    std::vector<uint32_t> driverOfVehicle_;             // per vehicle: personId+1, 0 = none
+    std::vector<TransitService> transitServices_;
+
+    // Occupancy: who is in which vehicle when (built by parser, rebuilt at load
+    // from serialized trips is NOT possible for pt riders' exact board/alight
+    // times, so it is derived from trips at load: teleported trips are skipped,
+    // vehicle trips use [departTimeMs, arriveTimeMs]).
+    StringInterner vehicleIdStrings_;
+    StringInterner personIdStrings_;
+    StringInterner actTypeStrings_;
+    StringInterner legModeStrings_;
+    StringInterner transitLineStrings_;
+    StringInterner transitRouteStrings_;
+
+    // Call after populating vehicles_ to compute firstEnterTime_/lastLeaveTime_
+    void buildLookupArrays();
+
+    // Call after personTrips_/transitServices_ are final (load or preprocess)
+    // to build the transit-service and occupancy lookup maps.
+    void buildTripLookups();
+
+private:
+    TimeMs minTime_ = 0;
+    TimeMs maxTime_ = 0;
+
+    // vehicleId -> index into transitServices_
+    std::unordered_map<uint32_t, size_t> transitServiceLookup_;
+
+    // vehicleId -> intervals a person is aboard (from vehicle trips)
+    struct Occupancy { TimeMs enterMs; TimeMs leaveMs; uint32_t personId; };
+    std::unordered_map<uint32_t, std::vector<Occupancy>> occupancy_;
+};
+
+} // namespace simvis

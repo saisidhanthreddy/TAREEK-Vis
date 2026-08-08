@@ -1,0 +1,51 @@
+; Inno Setup script for TAREEK-Vis.
+; Builds a per-user installer (no admin rights required) from the folder
+; produced by deploy.bat (..\dist\TAREEK-Vis).
+;
+; Requires Inno Setup 6: https://jrsoftware.org/isinfo.php
+; Build with: iscc installer\TAREEK-Vis.iss
+; Output: installer\Output\TAREEK-Vis-Setup-<version>.exe
+
+#define MyAppName "TAREEK-Vis"
+#define MyAppVersion "1.0.0"
+#define MyAppPublisher "TAREEK-Vis Contributors"
+#define MyAppURL "https://github.com/jalal1/tareek-vis"
+#define MyAppExeName "TAREEK-Vis.exe"
+
+[Setup]
+AppId={{B6E2A6C1-6E7B-4B6B-9B7E-6F6C6B7A9C10}
+AppName={#MyAppName}
+AppVersion={#MyAppVersion}
+AppPublisher={#MyAppPublisher}
+AppPublisherURL={#MyAppURL}
+AppSupportURL={#MyAppURL}
+AppUpdatesURL={#MyAppURL}
+DefaultDirName={autopf}\{#MyAppName}
+DefaultGroupName={#MyAppName}
+DisableProgramGroupPage=yes
+PrivilegesRequired=lowest
+OutputDir=Output
+OutputBaseFilename=TAREEK-Vis-Setup-{#MyAppVersion}
+Compression=lzma2
+SolidCompression=yes
+ArchitecturesInstallIn64BitMode=x64compatible
+WizardStyle=modern
+SetupIconFile=
+UninstallDisplayIcon={app}\{#MyAppExeName}
+
+[Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[Tasks]
+Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Additional icons:"; Flags: unchecked
+
+[Files]
+Source: "..\dist\TAREEK-Vis\*"; DestDir: "{app}"; Flags: recursesubdirs ignoreversion
+
+[Icons]
+Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
+Name: "{group}\Uninstall {#MyAppName}"; Filename: "{uninstallexe}"
+Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
+
+[Run]
+Filename: "{app}\{#MyAppExeName}"; Description: "Launch {#MyAppName}"; Flags: nowait postinstall skipifsilent

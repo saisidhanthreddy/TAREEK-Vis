@@ -1,0 +1,90 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up MSYS2 (UCRT64)
+        uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            mingw-w64-ucrt-x86_64-cmake
+            mingw-w64-ucrt-x86_64-gcc
+            mingw-w64-ucrt-x86_64-qt6-base
+            mingw-w64-ucrt-x86_64-qt6-tools
+            mingw-w64-ucrt-x86_64-zlib
+            mingw-w64-ucrt-x86_64-ninja
+
+      - name: Configure
+        shell: msys2 {0}
+        run: cmake -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        shell: msys2 {0}
+        run: cmake --build build --config Release
+
+      - name: Download FFmpeg (essentials build)
+        shell: msys2 {0}
+        run: |
+          curl -L -o ffmpeg.zip https://www.gyan.dev/ffmpeg/builds/ffmpeg-release-essentials.zip
+          unzip -q ffmpeg.zip -d ffmpeg-extract
+          mkdir -p ffmpeg
+          cp ffmpeg-extract/*/bin/ffmpeg.exe ffmpeg/ffmpeg.exe
+
+      - name: Assemble redistributable folder
+        shell: msys2 {0}
+        run: |
+          set -e
+          DIST_DIR=dist/TAREEK-Vis
+          mkdir -p "$DIST_DIR"
+          cp build/TAREEK-Vis.exe "$DIST_DIR/"
+          windeployqt6.exe --release --no-translations "$DIST_DIR/TAREEK-Vis.exe"
+          cp /ucrt64/bin/libgcc_s_seh-1.dll "$DIST_DIR/"
+          cp /ucrt64/bin/libstdc++-6.dll "$DIST_DIR/"
+          cp /ucrt64/bin/libwinpthread-1.dll "$DIST_DIR/"
+          cp /ucrt64/bin/zlib1.dll "$DIST_DIR/" 2>/dev/null || true
+          mkdir -p "$DIST_DIR/ffmpeg"
+          cp ffmpeg/ffmpeg.exe "$DIST_DIR/ffmpeg/"
+
+      - name: Derive version from tag
+        id: version
+        shell: bash
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Set installer version
+        shell: bash
+        run: |
+          sed -i "s/#define MyAppVersion \".*\"/#define MyAppVersion \"${{ steps.version.outputs.version }}\"/" installer/TAREEK-Vis.iss
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup --no-progress -y
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" installer\TAREEK-Vis.iss
+
+      - name: Zip portable build
+        shell: bash
+        run: |
+          cd dist
+          7z a -tzip "../TAREEK-Vis-${{ steps.version.outputs.version }}-portable.zip" TAREEK-Vis
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            installer/Output/TAREEK-Vis-Setup-${{ steps.version.outputs.version }}.exe
+            TAREEK-Vis-${{ steps.version.outputs.version }}-portable.zip
+          generate_release_notes: true
