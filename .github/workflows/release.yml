@@ -52,10 +52,26 @@ jobs:
           mkdir -p "$DIST_DIR"
           cp build/TAREEK-Vis.exe "$DIST_DIR/"
           windeployqt6.exe --release --no-translations "$DIST_DIR/TAREEK-Vis.exe"
-          cp /ucrt64/bin/libgcc_s_seh-1.dll "$DIST_DIR/"
-          cp /ucrt64/bin/libstdc++-6.dll "$DIST_DIR/"
-          cp /ucrt64/bin/libwinpthread-1.dll "$DIST_DIR/"
-          cp /ucrt64/bin/zlib1.dll "$DIST_DIR/" 2>/dev/null || true
+
+          # Resolve remaining UCRT64 runtime deps transitively (ICU, GCC
+          # runtime, zlib, etc.) - windeployqt only handles Qt's own DLLs,
+          # not their transitive system/runtime dependencies.
+          cd "$DIST_DIR"
+          changed=1
+          while [ "$changed" = 1 ]; do
+            changed=0
+            for f in $(find . -iname '*.dll' -o -iname 'TAREEK-Vis.exe'); do
+              for dep in $(ldd "$f" 2>/dev/null | grep -oi '/ucrt64/[^ ]*\.dll'); do
+                base=$(basename "$dep")
+                if [ ! -f "./$base" ]; then
+                  cp -u "$dep" .
+                  changed=1
+                fi
+              done
+            done
+          done
+          cd -
+
           mkdir -p "$DIST_DIR/ffmpeg"
           cp ffmpeg/ffmpeg.exe "$DIST_DIR/ffmpeg/"
 

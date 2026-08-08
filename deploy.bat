@@ -31,11 +31,12 @@ if errorlevel 1 (
     exit /b 1
 )
 
-echo Copying MinGW/UCRT64 runtime DLLs...
-copy /y "C:\msys64\ucrt64\bin\libgcc_s_seh-1.dll" "%DIST_DIR%\" >nul
-copy /y "C:\msys64\ucrt64\bin\libstdc++-6.dll" "%DIST_DIR%\" >nul
-copy /y "C:\msys64\ucrt64\bin\libwinpthread-1.dll" "%DIST_DIR%\" >nul
-copy /y "C:\msys64\ucrt64\bin\zlib1.dll" "%DIST_DIR%\" >nul
+echo Resolving and copying UCRT64 runtime DLLs (ldd, incl. ICU, transitively)...
+C:\msys64\usr\bin\bash.exe -lc "set -e; cd '%DIST_DIR:\=/%'; changed=1; while [ \"$changed\" = 1 ]; do changed=0; for f in $(find . -iname '*.dll' -o -iname 'TAREEK-Vis.exe'); do for dep in $(ldd \"$f\" 2>/dev/null | grep -oi '/ucrt64/[^ ]*\.dll'); do base=$(basename \"$dep\"); if [ ! -f \"./$base\" ]; then cp -u \"$dep\" .; changed=1; fi; done; done; done"
+if errorlevel 1 (
+    echo Failed to resolve/copy UCRT64 runtime DLLs via ldd!
+    exit /b 1
+)
 
 if exist "%PROJECT_DIR%ffmpeg\ffmpeg.exe" (
     echo Bundling FFmpeg...
