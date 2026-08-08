@@ -206,9 +206,13 @@ bool VideoRecorder::startFFmpegProcess() {
     // Find FFmpeg executable
     QString ffmpegPath;
 
-    // First, check if ffmpeg.exe is bundled in the same directory as the executable
+    // First, check if ffmpeg is bundled in the same directory as the executable
     QString appDir = QCoreApplication::applicationDirPath();
+#ifdef Q_OS_WIN
     QString bundledFFmpeg = appDir + "/ffmpeg/ffmpeg.exe";
+#else
+    QString bundledFFmpeg = appDir + "/ffmpeg/ffmpeg";
+#endif
 
     if (QFileInfo::exists(bundledFFmpeg)) {
         ffmpegPath = bundledFFmpeg;
