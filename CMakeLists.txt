@@ -106,8 +106,10 @@ if(WIN32)
     )
 endif()
 
-# Copy sample data for testing
-file(COPY ${CMAKE_SOURCE_DIR}/inputs DESTINATION ${CMAKE_BINARY_DIR})
+# Copy sample data for testing, if present locally (not part of the repo)
+if(EXISTS ${CMAKE_SOURCE_DIR}/inputs)
+    file(COPY ${CMAKE_SOURCE_DIR}/inputs DESTINATION ${CMAKE_BINARY_DIR})
+endif()
 
 # Copy FFmpeg to build directory if it exists
 if(EXISTS ${CMAKE_SOURCE_DIR}/ffmpeg)
