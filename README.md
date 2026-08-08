@@ -19,7 +19,7 @@ A high-performance desktop application for visualizing MATSim simulation outputs
 For most users, the easiest way to run TAREEK-Vis is the prebuilt installer —
 no Qt, no compiler, no MSYS2 needed.
 
-1. Go to the [Releases page](https://github.com/jalal1/tareek-vis/releases)
+1. Go to the [Releases page](https://github.com/jalal1/TAREEK-Vis/releases)
    and download `TAREEK-Vis-Setup-x.y.z.exe` from the latest release
    (a portable `TAREEK-Vis-x.y.z-portable.zip` is also attached if you'd
    rather not install anything — just unzip and run `TAREEK-Vis.exe`).
