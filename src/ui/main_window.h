@@ -51,6 +51,8 @@ private slots:
     void onShowNodesToggled(bool checked);
     void onShowLinksToggled(bool checked);
     void onShowVehiclesToggled(bool checked);
+    void onShowLinkVolumesToggled(bool checked);
+    void onShowActivityDensityToggled(bool checked);
     void onFitToNetwork();
 
     // Vehicle options
@@ -176,6 +178,8 @@ private:
     QAction* showNodesAction_;
     QAction* showLinksAction_;
     QAction* showVehiclesAction_;
+    QAction* showLinkVolumesAction_;
+    QAction* showActivityDensityAction_;
     QAction* showCarsAction_;
     QAction* showBusVehiclesAction_;
     QAction* showTramVehiclesAction_;

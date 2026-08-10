@@ -191,6 +191,16 @@ void MainWindow::setupMenus() {
     showLinksAction_->setChecked(true);
     connect(showLinksAction_, &QAction::toggled, this, &MainWindow::onShowLinksToggled);
 
+    showLinkVolumesAction_ = viewMenu->addAction("Show Daily &Volume Heatmap");
+    showLinkVolumesAction_->setCheckable(true);
+    showLinkVolumesAction_->setChecked(false);
+    connect(showLinkVolumesAction_, &QAction::toggled, this, &MainWindow::onShowLinkVolumesToggled);
+
+    showActivityDensityAction_ = viewMenu->addAction("Show Activity &Density Heatmap");
+    showActivityDensityAction_->setCheckable(true);
+    showActivityDensityAction_->setChecked(false);
+    connect(showActivityDensityAction_, &QAction::toggled, this, &MainWindow::onShowActivityDensityToggled);
+
     showCountsAction_ = viewMenu->addAction("Show Link &Counts");
     showCountsAction_->setCheckable(true);
     showCountsAction_->setChecked(false);
@@ -1212,6 +1222,14 @@ void MainWindow::onShowNodesToggled(bool checked) {
 
 void MainWindow::onShowLinksToggled(bool checked) {
     mapWidget_->setShowLinks(checked);
+}
+
+void MainWindow::onShowLinkVolumesToggled(bool checked) {
+    mapWidget_->setShowLinkVolumes(checked);
+}
+
+void MainWindow::onShowActivityDensityToggled(bool checked) {
+    mapWidget_->setShowActivityDensity(checked);
 }
 
 void MainWindow::onShowVehiclesToggled(bool checked) {

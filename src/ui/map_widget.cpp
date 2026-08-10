@@ -1,6 +1,8 @@
 #include "map_widget.h"
 #include "core/video_recorder.h"
 #include "core/logger.h"
+#include "renderer/link_volume_renderer.h"
+#include "renderer/activity_density_renderer.h"
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QOpenGLFramebufferObject>
@@ -28,6 +30,8 @@ MapWidget::~MapWidget() {
     networkRenderer_.reset();
     vehicleRenderer_.reset();
     tileRenderer_.reset();
+    linkVolumeRenderer_.reset();
+    activityDensityRenderer_.reset();
     doneCurrent();
 }
 
@@ -42,6 +46,12 @@ void MapWidget::setNetworkIndex(NetworkIndex* index) {
     if (transitRouteRenderer_) {
         transitRouteRenderer_->setNetworkIndex(index);
     }
+    if (linkVolumeRenderer_) {
+        linkVolumeRenderer_->setIndices(index, vehicleIndex_);
+    }
+    if (activityDensityRenderer_) {
+        activityDensityRenderer_->setIndices(index, vehicleIndex_);
+    }
     fitToNetwork();
     update();
 }
@@ -51,7 +61,12 @@ void MapWidget::setVehicleIndex(VehicleIndex* index) {
     if (vehicleRenderer_) {
         vehicleRenderer_->setVehicleIndex(index);
     }
-
+    if (linkVolumeRenderer_) {
+        linkVolumeRenderer_->setIndices(networkIndex_, index);
+    }
+    if (activityDensityRenderer_) {
+        activityDensityRenderer_->setIndices(networkIndex_, index);
+    }
     if (index) {
         minTime_ = VehicleIndex::toSeconds(index->minTime());
         maxTime_ = VehicleIndex::toSeconds(index->maxTime());
@@ -492,6 +507,20 @@ void MapWidget::initializeGL() {
     if (!transitRouteRenderer_->initialize()) {
         LOG_WARN("Failed to initialize transit route renderer");
     }
+    linkVolumeRenderer_ = std::make_unique<LinkVolumeRenderer>();
+    if (!linkVolumeRenderer_->initialize()) {
+        LOG_WARN("Failed to initialize link volume renderer");
+    }
+    if (networkIndex_ && vehicleIndex_) {
+        linkVolumeRenderer_->setIndices(networkIndex_, vehicleIndex_);
+    }
+    activityDensityRenderer_ = std::make_unique<ActivityDensityRenderer>();
+    if (!activityDensityRenderer_->initialize()) {
+        LOG_WARN("Failed to initialize activity density renderer");
+    }
+    if (networkIndex_ && vehicleIndex_) {
+        activityDensityRenderer_->setIndices(networkIndex_, vehicleIndex_);
+    }
 
     countsRenderer_ = std::make_unique<CountsRenderer>();
     personRouteRenderer_ = std::make_unique<PersonRouteRenderer>();
@@ -570,6 +599,14 @@ void MapWidget::paintGL() {
         // Render network
         if (networkRenderer_) {
             networkRenderer_->render();
+        }
+        // Render link volumes(Heatmap)
+        if (showLinkVolumes_ && linkVolumeRenderer_) {
+            linkVolumeRenderer_->render();
+        }
+        // Render Activity Density Heatmap
+        if (showActivityDensity_ && activityDensityRenderer_) {
+            activityDensityRenderer_->render();
         }
 
         // Render count links overlay (above network, below transit)
@@ -690,6 +727,8 @@ void MapWidget::updateProjection() {
     }
     if (vehicleHaloRenderer_) vehicleHaloRenderer_->setProjectionMatrix(projectionMatrix_);
     if (countsHaloRenderer_)  countsHaloRenderer_->setProjectionMatrix(projectionMatrix_);
+    if (linkVolumeRenderer_) linkVolumeRenderer_->setProjectionMatrix(projectionMatrix_);
+    if (activityDensityRenderer_) activityDensityRenderer_->setProjectionMatrix(projectionMatrix_);
 }
 
 void MapWidget::updateView() {
@@ -716,6 +755,8 @@ void MapWidget::updateView() {
     }
     if (vehicleHaloRenderer_) vehicleHaloRenderer_->setViewMatrix(viewMatrix_);
     if (countsHaloRenderer_)  countsHaloRenderer_->setViewMatrix(viewMatrix_);
+    if (linkVolumeRenderer_) linkVolumeRenderer_->setViewMatrix(viewMatrix_);
+    if (activityDensityRenderer_) activityDensityRenderer_->setViewMatrix(viewMatrix_);
 
     updateProjection();
 }
@@ -1038,5 +1079,18 @@ QImage MapWidget::renderToImage(int scaleFactor) {
 
     return image;
 }
-
+void MapWidget::setShowLinkVolumes(bool show) {
+    showLinkVolumes_ = show;
+    if (linkVolumeRenderer_) {
+        linkVolumeRenderer_->setVisible(show);
+    }
+    update();
+}
+void MapWidget::setShowActivityDensity(bool show) {
+    showActivityDensity_ = show;
+    if (activityDensityRenderer_) {
+        activityDensityRenderer_->setVisible(show);
+    }
+    update();
+}
 } // namespace simvis

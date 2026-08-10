@@ -15,6 +15,8 @@
 #include "renderer/tile_renderer.h"
 #include "data/network_index.h"
 #include "data/vehicle_index.h"
+#include "renderer/link_volume_renderer.h"
+#include "renderer/activity_density_renderer.h"
 
 namespace simvis {
 
@@ -57,6 +59,14 @@ public:
     void setShowBuses(bool show);
     void setShowTrams(bool show);
     void setShowRailVehicles(bool show);
+    
+    // Feature Enhancement: Link Volume Heatmap
+    void setShowLinkVolumes(bool show);
+    bool showLinkVolumes() const { return showLinkVolumes_; }
+
+    // Feature Enhancement: Activity Density Heatmap
+    void setShowActivityDensity(bool show);
+    bool showActivityDensity() const { return showActivityDensity_; }
 
     // Vehicle rendering options
     void setVehicleSize(float size);
@@ -166,6 +176,12 @@ private:
     std::unique_ptr<PersonRouteRenderer> personRouteRenderer_;
     std::unique_ptr<HaloRenderer> vehicleHaloRenderer_;  // cyan ring on tracked vehicle
     std::unique_ptr<HaloRenderer> countsHaloRenderer_;   // cyan rings on count stations
+    
+    // Feature Enhancement: Link Volume Heatmap Renderer
+    std::unique_ptr<LinkVolumeRenderer> linkVolumeRenderer_;
+
+    // Feature Enhancement: Activity Density Renderer
+    std::unique_ptr<ActivityDensityRenderer> activityDensityRenderer_;
 
     // Activity markers painted via QPainter on top of the GL frame
     std::vector<ActivityMarker> activityMarkers_;
@@ -205,6 +221,8 @@ private:
     bool showNodes_ = false;  // Off by default (View > Show Nodes)
     bool showLinks_ = true;
     bool showVehicles_ = true;
+    bool showLinkVolumes_ = false; // Off by default
+    bool showActivityDensity_ = false; // Off by default
 
     // Vehicle tracking
     uint32_t trackedVehicleId_ = 0;  // 0 = not tracking any vehicle

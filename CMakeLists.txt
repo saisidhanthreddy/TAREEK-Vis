@@ -34,6 +34,8 @@ set(SOURCES
     src/renderer/person_route_renderer.cpp
     src/renderer/halo_renderer.cpp
     src/renderer/tile_renderer.cpp
+    src/renderer/link_volume_renderer.cpp
+    src/renderer/activity_density_renderer.cpp
     src/ui/main_window.cpp
     src/ui/map_widget.cpp
     src/ui/info_panel.cpp
@@ -66,6 +68,8 @@ set(HEADERS
     src/renderer/person_route_renderer.h
     src/renderer/halo_renderer.h
     src/renderer/tile_renderer.h
+    src/renderer/link_volume_renderer.h 
+    src/renderer/activity_density_renderer.h
     src/core/crs_transform.h
     src/ui/main_window.h
     src/ui/map_widget.h
@@ -100,10 +104,6 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
 # Platform-specific settings
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE opengl32)
-    # Deploy Qt DLLs on Windows
-    set_target_properties(${PROJECT_NAME} PROPERTIES
-        WIN32_EXECUTABLE TRUE
-    )
 endif()
 
 # Copy sample data for testing, if present locally (not part of the repo)
