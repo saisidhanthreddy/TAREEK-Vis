@@ -8,7 +8,7 @@ set(CMAKE_AUTORCC ON)
 set(CMAKE_AUTOUIC ON)
 
 # Find required packages
-find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent Network)
+find_package(Qt6 REQUIRED COMPONENTS Widgets OpenGL OpenGLWidgets Concurrent Network Charts)
 find_package(ZLIB REQUIRED)
 
 # Source files
@@ -98,17 +98,17 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Qt6::OpenGLWidgets
     Qt6::Concurrent
     Qt6::Network
+    Qt6::Charts
     ZLIB::ZLIB
 )
 
 # Platform-specific settings
 if(WIN32)
     target_link_libraries(${PROJECT_NAME} PRIVATE opengl32)
-endif()
-
-# Copy sample data for testing, if present locally (not part of the repo)
-if(EXISTS ${CMAKE_SOURCE_DIR}/inputs)
-    file(COPY ${CMAKE_SOURCE_DIR}/inputs DESTINATION ${CMAKE_BINARY_DIR})
+    # Deploy Qt DLLs on Windows
+    set_target_properties(${PROJECT_NAME} PROPERTIES
+        WIN32_EXECUTABLE TRUE
+    )
 endif()
 
 # Copy FFmpeg to build directory if it exists

@@ -5,6 +5,12 @@
 #include <QGridLayout>
 #include <QMouseEvent>
 #include <QVariant>
+#include <QBarSet>
+#include <QBarSeries>
+#include <QChart>
+#include <QChartView>
+#include <QBarCategoryAxis>
+#include <QValueAxis>
 
 namespace simvis {
 
@@ -366,6 +372,57 @@ void InfoPanel::showLinkInfo(const LinkInfo& info) {
         };
         kv(0, "From", info.fromNode);
         kv(1, "To", info.toNode);
+    }
+
+    if (info.hourlyVolumes.size() == 24) {
+        addDivider();
+        addHeader("Daily Volume (24h)");
+
+        auto* barSet = new QBarSet("Vehicles");
+        barSet->setColor(QColor(panelstyle::kAccent)); // Matches your theme's blue/accent color
+        
+        uint32_t maxVol = 0;
+        QStringList hours;
+        for (int i = 0; i < 24; ++i) {
+            barSet->append(info.hourlyVolumes[i]);
+            if (info.hourlyVolumes[i] > maxVol) maxVol = info.hourlyVolumes[i];
+            
+            // Only label every 4th hour to prevent crowding the X-axis
+            if (i % 4 == 0) hours << QString::number(i);
+            else hours << ""; 
+        }
+
+        auto* series = new QBarSeries();
+        series->append(barSet);
+        series->setBarWidth(0.8);
+
+        auto* chart = new QChart();
+        chart->addSeries(series);
+        chart->legend()->hide();
+        chart->setBackgroundVisible(false); // Keeps the dark theme background
+        chart->layout()->setContentsMargins(0, 0, 0, 0);
+
+        auto* axisX = new QBarCategoryAxis();
+        axisX->append(hours);
+        axisX->setLabelsColor(Qt::gray);
+        axisX->setGridLineVisible(false);
+        chart->addAxis(axisX, Qt::AlignBottom);
+        series->attachAxis(axisX);
+
+        auto* axisY = new QValueAxis();
+        axisY->setLabelsColor(Qt::gray);
+        axisY->setRange(0, maxVol > 0 ? maxVol : 10);
+        axisY->setLabelFormat("%d");
+        chart->addAxis(axisY, Qt::AlignLeft);
+        series->attachAxis(axisY);
+
+        auto* chartView = new QChartView(chart);
+        chartView->setRenderHint(QPainter::Antialiasing);
+        chartView->setMinimumHeight(220); // Gives the chart enough room to breathe
+        chartView->setStyleSheet("background: transparent;");
+        
+        // Insert right before the trailing stretch
+        contentLayout_->insertWidget(contentLayout_->count() - 1, chartView);
     }
 
     if (info.hasCounts) {

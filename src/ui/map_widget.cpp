@@ -49,9 +49,6 @@ void MapWidget::setNetworkIndex(NetworkIndex* index) {
     if (linkVolumeRenderer_) {
         linkVolumeRenderer_->setIndices(index, vehicleIndex_);
     }
-    if (activityDensityRenderer_) {
-        activityDensityRenderer_->setIndices(index, vehicleIndex_);
-    }
     fitToNetwork();
     update();
 }
@@ -63,9 +60,6 @@ void MapWidget::setVehicleIndex(VehicleIndex* index) {
     }
     if (linkVolumeRenderer_) {
         linkVolumeRenderer_->setIndices(networkIndex_, index);
-    }
-    if (activityDensityRenderer_) {
-        activityDensityRenderer_->setIndices(networkIndex_, index);
     }
     if (index) {
         minTime_ = VehicleIndex::toSeconds(index->minTime());
@@ -507,20 +501,15 @@ void MapWidget::initializeGL() {
     if (!transitRouteRenderer_->initialize()) {
         LOG_WARN("Failed to initialize transit route renderer");
     }
-    linkVolumeRenderer_ = std::make_unique<LinkVolumeRenderer>();
-    if (!linkVolumeRenderer_->initialize()) {
-        LOG_WARN("Failed to initialize link volume renderer");
-    }
-    if (networkIndex_ && vehicleIndex_) {
-        linkVolumeRenderer_->setIndices(networkIndex_, vehicleIndex_);
-    }
+
     activityDensityRenderer_ = std::make_unique<ActivityDensityRenderer>();
     if (!activityDensityRenderer_->initialize()) {
         LOG_WARN("Failed to initialize activity density renderer");
     }
-    if (networkIndex_ && vehicleIndex_) {
-        activityDensityRenderer_->setIndices(networkIndex_, vehicleIndex_);
-    }
+
+    activityDensityRenderer_->setVisible(showActivityDensity_);
+    countsRenderer_ = std::make_unique<CountsRenderer>();
+    personRouteRenderer_ = std::make_unique<PersonRouteRenderer>();
 
     countsRenderer_ = std::make_unique<CountsRenderer>();
     personRouteRenderer_ = std::make_unique<PersonRouteRenderer>();
@@ -1090,6 +1079,12 @@ void MapWidget::setShowActivityDensity(bool show) {
     showActivityDensity_ = show;
     if (activityDensityRenderer_) {
         activityDensityRenderer_->setVisible(show);
+    }
+    update();
+}
+void MapWidget::setActivityDensityData(const std::vector<float>& data) {
+    if (activityDensityRenderer_) {
+        activityDensityRenderer_->setDensityData(data);
     }
     update();
 }

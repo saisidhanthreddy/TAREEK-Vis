@@ -17,6 +17,10 @@
 #include "core/crs_transform.h"
 #include "core/video_recorder.h"
 #include "screenshot_exporter.h"
+#include <QtConcurrent>
+#include <QFutureWatcher>
+#include <unordered_map>
+#include <vector>
 
 namespace simvis {
 
@@ -224,6 +228,11 @@ private:
 
     // CRS info
     CRSInfo networkCrs_;
+
+    std::unordered_map<uint32_t, std::vector<uint32_t>> linkHourlyVolumes_;
+    QFutureWatcher<std::unordered_map<uint32_t, std::vector<uint32_t>>> volumeWatcher_;
+
+    QFutureWatcher<std::vector<float>> densityWatcher_;
 
     // Throttle for live vehicle-info panel refresh (sim seconds of last update)
     float lastVehicleInfoRefreshTime_ = -1.0f;

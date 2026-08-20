@@ -66,6 +66,7 @@ public:
 
     // Feature Enhancement: Activity Density Heatmap
     void setShowActivityDensity(bool show);
+    void setActivityDensityData(const std::vector<float>& data);
     bool showActivityDensity() const { return showActivityDensity_; }
 
     // Vehicle rendering options

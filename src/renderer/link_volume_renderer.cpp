@@ -170,7 +170,7 @@ void LinkVolumeRenderer::render() {
     GLint mvpLoc = glGetUniformLocation(program_, "uMVP");
     glUniformMatrix4fv(mvpLoc, 1, GL_FALSE, mvp.constData());
 
-    glLineWidth(3.0f); // Thicker lines for visibility
+    
     glEnable(GL_BLEND);
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 

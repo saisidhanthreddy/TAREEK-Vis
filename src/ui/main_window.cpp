@@ -26,6 +26,7 @@
 #include <QSettings>
 #include <algorithm>
 #include <cmath>
+#include <tuple>
 
 namespace simvis {
 
@@ -147,6 +148,16 @@ void MainWindow::setupUi() {
     // Single-trip overlay when a trip card is clicked
     connect(infoPanel_, &InfoPanel::tripClicked,
             this, &MainWindow::onTripClicked);
+
+    connect(&volumeWatcher_, &QFutureWatcher<std::unordered_map<uint32_t, std::vector<uint32_t>>>::finished, this, [this]() {
+        linkHourlyVolumes_ = volumeWatcher_.result();
+        LOG_INFO("Background volume aggregation completed.");
+    });
+    
+    connect(&densityWatcher_, &QFutureWatcher<std::vector<float>>::finished, this, [this]() {
+        mapWidget_->setActivityDensityData(densityWatcher_.result());
+        LOG_INFO("Background density aggregation completed.");
+    });
 }
 
 void MainWindow::setupMenus() {
@@ -863,6 +874,92 @@ void MainWindow::loadBinaryFiles() {
 
     // Fit view to network
     mapWidget_->fitToNetwork();
+
+    VehicleIndex* vIdx = vehicleIndex_.get();
+    QFuture<std::unordered_map<uint32_t, std::vector<uint32_t>>> future = QtConcurrent::run([vIdx]() {
+        std::unordered_map<uint32_t, std::vector<uint32_t>> volumes;
+        if (!vIdx) return volumes;
+        
+        size_t count = vIdx->vehicleCount();
+        for (size_t i = 0; i < count; ++i) {
+            const auto* traj = vIdx->trajectory(static_cast<uint32_t>(i));
+            if (!traj) continue;
+            
+            for (const auto& seg : traj->segments) {
+                // Convert MATSim entry time (ms) to hour of the day (0-23)
+                int hour = static_cast<int>(VehicleIndex::toSeconds(seg.enterTime) / 3600.0f);
+                if (hour >= 0 && hour < 24) {
+                    if (volumes[seg.linkId].empty()) volumes[seg.linkId].assign(24, 0);
+                    volumes[seg.linkId][hour]++;
+                }
+            }
+        }
+        return volumes;
+    });
+    volumeWatcher_.setFuture(future);
+
+    NetworkIndex* nIdx = networkIndex_.get();
+    QFuture<std::vector<float>> densityFuture = QtConcurrent::run([vIdx, nIdx]() {
+        std::vector<float> vertices;
+        if (!vIdx || !nIdx) return vertices;
+        
+        // Color Palette based on activity type
+        auto getColor = [](const QString& act) -> std::tuple<float, float, float> {
+            if (act.contains("home", Qt::CaseInsensitive)) 
+                return {0.1f, 0.5f, 1.0f}; // Blue
+            if (act.contains("work", Qt::CaseInsensitive)) 
+                return {1.0f, 0.1f, 0.3f}; // Red/Pink
+            if (act.contains("shop", Qt::CaseInsensitive) || act.contains("leisure", Qt::CaseInsensitive)) 
+                return {0.2f, 1.0f, 0.2f}; // Green
+            return {1.0f, 0.8f, 0.1f}; // Yellow/Orange fallback
+        };
+
+        auto addQuad = [&](uint32_t linkId, const QString& actType) {
+            if (linkId == 0xFFFFFFFFu) return;
+            const auto* link = nIdx->getLink(linkId);
+            if (!link) return;
+            const auto* node = nIdx->getNode(link->toNode);
+            if (!node) return;
+
+            auto [r, g, b] = getColor(actType);
+            float cx = node->x;
+            float cy = node->y;
+            float radius = 400.0f; // Soft glow radius in world meters
+
+            // Helper to push a single vertex
+            auto pushVert = [&](float dx, float dy, float u, float v) {
+                vertices.push_back(cx + dx); vertices.push_back(cy + dy);
+                vertices.push_back(r); vertices.push_back(g); vertices.push_back(b);
+                vertices.push_back(u); vertices.push_back(v);
+            };
+
+            // Triangle 1 (Top-Left, Bottom-Left, Bottom-Right)
+            pushVert(-radius,  radius, -1.0f,  1.0f);
+            pushVert(-radius, -radius, -1.0f, -1.0f);
+            pushVert( radius, -radius,  1.0f, -1.0f);
+
+            // Triangle 2 (Top-Left, Bottom-Right, Top-Right)
+            pushVert(-radius,  radius, -1.0f,  1.0f);
+            pushVert( radius, -radius,  1.0f, -1.0f);
+            pushVert( radius,  radius,  1.0f,  1.0f);
+        };
+
+        size_t personCount = vIdx->personCount();
+        for (size_t i = 0; i < personCount; ++i) {
+            const auto* trips = vIdx->personTrips(static_cast<uint32_t>(i));
+            if (!trips) continue;
+            for (const auto& trip : *trips) {
+                if (trip.fromActTypeId != 0xFFFF) {
+                    addQuad(trip.fromLinkId, vIdx->actTypeString(trip.fromActTypeId));
+                }
+                if (trip.toActTypeId != 0xFFFF) {
+                    addQuad(trip.toLinkId, vIdx->actTypeString(trip.toActTypeId));
+                }
+            }
+        }
+        return vertices;
+    });
+    densityWatcher_.setFuture(densityFuture);
 }
 
 void MainWindow::applyTransitData() {
@@ -1517,6 +1614,12 @@ void MainWindow::onNetworkLinkClicked(uint32_t linkId) {
             info.countStationId =
                 QString::fromStdString(countsData_->counts[it->second].stationId);
         }
+    }
+    auto volIt = linkHourlyVolumes_.find(linkId);
+    if (volIt != linkHourlyVolumes_.end()) {
+        info.hourlyVolumes = volIt->second;
+    } else {
+        info.hourlyVolumes.assign(24, 0); // No traffic recorded
     }
 
     infoPanel_->showLinkInfo(info);
