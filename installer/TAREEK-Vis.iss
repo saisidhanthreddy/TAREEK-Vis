@@ -7,7 +7,8 @@
 ; Output: installer\Output\TAREEK-Vis-Setup-<version>.exe
 
 #define MyAppName "TAREEK-Vis"
-#define MyAppVersion "1.0.0"
+; Keep in step with project(... VERSION ...) in CMakeLists.txt.
+#define MyAppVersion "1.1.0"
 #define MyAppPublisher "TAREEK-Vis Contributors"
 #define MyAppURL "https://github.com/jalal1/TAREEK-Vis"
 #define MyAppExeName "TAREEK-Vis.exe"

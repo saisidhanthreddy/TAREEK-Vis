@@ -20,7 +20,7 @@ int main(int argc, char* argv[]) {
 
         QApplication app(argc, argv);
         app.setApplicationName("TAREEK-Vis");
-        app.setApplicationVersion("1.0.0");
+        app.setApplicationVersion(TAREEK_VIS_VERSION);
         app.setOrganizationName("TAREEK-Vis");
 
         LOG_INFO("QApplication created");

@@ -5,6 +5,7 @@
 #include <QAction>
 #include <QMenu>
 #include <QDir>
+#include <QTimer>
 #include <memory>
 
 #include "map_widget.h"
@@ -17,6 +18,8 @@
 #include "core/crs_transform.h"
 #include "core/video_recorder.h"
 #include "screenshot_exporter.h"
+#include "analysis/nkdv_network.h"
+#include "analysis/heatmap_cache.h"
 
 namespace simvis {
 
@@ -41,6 +44,12 @@ protected:
     void closeEvent(QCloseEvent* event) override;
 
 private slots:
+    // Compute and show the density map for one activity type. Runs on a worker
+    // thread, because a computation takes seconds.
+    void onHeatmapTypeSelected(const QString& activityType);
+    void onClearHeatmap();
+    void onHeatmapSharedScaleToggled(bool shared);
+
     void onPreprocessingProgress(int percent, const QString& message);
     void onPreprocessingComplete(bool success);
     void onSimulationTimeChanged(float time);
@@ -136,6 +145,10 @@ private:
     std::vector<MapWidget::ActivityMarker> buildActivityMarkers(
         uint32_t personId, int tripIndex = -1) const;
 
+    // Rebuild the heatmap submenu from the activity types the loaded scenario
+    // actually contains. Types are scenario-defined, so they cannot be fixed.
+    void populateHeatmapMenu();
+
     void loadBinaryFiles();
     void startPreprocessing();
     void applyTransitData();
@@ -211,6 +224,75 @@ private:
 
     // Recent folders submenu (rebuilt from QSettings on every change)
     QMenu* recentFoldersMenu_ = nullptr;
+
+    // Activity density heatmap submenu, filled in once a scenario is loaded
+    QMenu* heatmapMenu_ = nullptr;
+    // The undirected graph the density engine works on. Built once per
+    // scenario, because it
+    // takes a moment and never changes while the scenario is loaded.
+    std::unique_ptr<NkdvNetwork> nkdvNetwork_;
+    // True while a density computation is running, so a second one cannot be
+    // started on top of it.
+    bool heatmapRunning_ = false;
+
+    // Density maps computed for this scenario, kept beside the other cache
+    // files so a map is computed once rather than once per session.
+    std::unique_ptr<HeatmapCache> heatmapCache_;
+    // When the events cache was written. A cache entry older than this
+    // describes data from before the last re-preprocess.
+    QDateTime heatmapSourceTime_;
+
+    // Types still to precompute in the background, newest request first.
+    QStringList heatmapPrecomputeQueue_;
+    bool heatmapPrecomputeActive_ = false;
+    // Set when the user asks for a type while another map is computing. That
+    // type is computed next and its result is shown, not only stored.
+    QString heatmapPendingUserType_;
+    // False on scenarios too large to precompute every type up front, where
+    // maps are computed only when asked for.
+    bool heatmapAutoPrecompute_ = true;
+    // Set once the user accepts the long-run warning on a large scenario, so
+    // the question is asked once rather than on every map.
+    bool heatmapLongRunAccepted_ = false;
+    // Raised on every scenario change. A computation carries the generation it
+    // started in, so a result that arrives after a switch is dropped instead of
+    // being shown over the new network.
+    uint64_t heatmapGeneration_ = 0;
+
+    // Clear everything that belongs to the scenario being replaced.
+    void resetScenarioState();
+
+    // Colors mean the same on every map when this is on. Off, each map is
+    // scaled to its own peak, which reads one map well but cannot be compared.
+    bool heatmapSharedScale_ = true;
+    QAction* heatmapSharedScaleAction_ = nullptr;
+    // Highest density across every map computed for this scenario, cached ones
+    // included, which anchors the shared scale. Seeded from the cache when a
+    // scenario loads so the colors do not depend on which types were opened.
+    float heatmapSharedPeak_ = 0.0f;
+    // Activity types this scenario contains, for finding that peak.
+    QStringList heatmapActivityTypes_;
+
+    void applyHeatmapScale();
+    void noteHeatmapPeak(float peak);
+
+    // Status shown beside the spinner in the status bar.
+    enum class HeatmapStatus { Idle, Working, Done, Failed };
+    void setHeatmapStatus(const QString& message, HeatmapStatus state);
+
+    QLabel* heatmapStatusLabel_ = nullptr;
+    QLabel* heatmapSpinnerLabel_ = nullptr;
+    QTimer* heatmapSpinnerTimer_ = nullptr;
+    int heatmapSpinnerFrame_ = 0;
+
+    // Start computing the maps that are not cached yet, one at a time, so the
+    // first click on a type is instant. Does nothing when all are cached.
+    void startHeatmapPrecompute();
+    void precomputeNextHeatmap();
+
+    // Run one density computation off the UI thread. `onDone` runs on the UI
+    // thread when it finishes.
+    void runHeatmapAsync(const QString& activityType, bool showWhenDone);
 
     // Background map actions
     QAction* showBackgroundMapAction_;

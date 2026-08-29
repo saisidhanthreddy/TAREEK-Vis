@@ -2,6 +2,7 @@
 #include "core/logger.h"
 #include <fstream>
 #include <algorithm>
+#include <cstddef>
 #include <cstring>
 #include <limits>
 #include <filesystem>
@@ -119,11 +120,24 @@ void VehicleIndex::buildTripLookups() {
                 {trip.departTimeMs, trip.arriveTimeMs, personId});
         }
     }
+
+    // Per-person activity index. activities_ is in event order, so appending as
+    // we scan keeps each person's list chronological without a sort.
+    activitiesByPerson_.clear();
+    for (uint32_t i = 0; i < activities_.size(); ++i) {
+        activitiesByPerson_[activities_[i].personId].push_back(i);
+    }
 }
 
 const std::vector<PersonTrip>* VehicleIndex::personTrips(uint32_t personId) const {
     if (personId >= personTrips_.size()) return nullptr;
     return &personTrips_[personId];
+}
+
+const std::vector<uint32_t>* VehicleIndex::activitiesForPerson(uint32_t personId) const {
+    auto it = activitiesByPerson_.find(personId);
+    if (it == activitiesByPerson_.end()) return nullptr;
+    return &it->second;
 }
 
 uint32_t VehicleIndex::vehicleDriver(VehicleId id) const {
@@ -229,6 +243,12 @@ bool VehicleIndex::writeFile(const QString& path, const VehicleIndex& index) {
         header.transitServiceOffset = header.vehicleDriverOffset + vehicleCount * sizeof(uint32_t);
         header.stringTablesOffset = header.transitServiceOffset + sizeof(uint32_t)
                                     + serviceCount * sizeof(TransitService);
+        // Activities are written last: the string tables are variable-length and
+        // read sequentially, so their end offset is not known until they are
+        // written. loadFile() seeks here using the count, after the tables.
+        header.activityCount = static_cast<uint32_t>(index.activities_.size());
+        header.reserved = 0;
+        header.activityDataOffset = 0;  // patched below, once the tables are out
 
         // Write header
         out.write(reinterpret_cast<const char*>(&header), sizeof(header));
@@ -311,15 +331,26 @@ bool VehicleIndex::writeFile(const QString& path, const VehicleIndex& index) {
             index.transitRouteStrings_.writeTo(os);
         }
 
+        // Write packed activity data and patch its offset into the header
+        uint64_t activityOffset = static_cast<uint64_t>(out.tellp());
+        if (!index.activities_.empty()) {
+            out.write(reinterpret_cast<const char*>(index.activities_.data()),
+                      static_cast<std::streamsize>(
+                          index.activities_.size() * sizeof(ActivityRecord)));
+        }
+        out.seekp(offsetof(VehicleIndexHeader, activityDataOffset));
+        out.write(reinterpret_cast<const char*>(&activityOffset), sizeof(activityOffset));
+
         out.flush();
         bool ok = out.good();
         if (!ok)
             LOG_ERROR(QString("VehicleIndex::writeFile: stream error on %1").arg(path));
         else
             LOG_INFO(QString("VehicleIndex::writeFile: complete (%1 vehicles, %2 segments, "
-                             "%3 persons, %4 trips, %5 transit services)")
+                             "%3 persons, %4 trips, %5 transit services, %6 activities)")
                 .arg(vehicleCount).arg(totalSegments)
-                .arg(personCount).arg(totalTrips).arg(serviceCount));
+                .arg(personCount).arg(totalTrips).arg(serviceCount)
+                .arg(index.activities_.size()));
         return ok;
 
     } catch (const std::exception& e) {
@@ -499,16 +530,41 @@ bool VehicleIndex::loadFile(const QString& path) {
             return false;
         }
 
+        // Read packed activities (v4). Written after the string tables, so the
+        // stream may have hit EOF above — clear it before seeking.
+        if (header.activityCount > 0) {
+            constexpr uint32_t kMaxActivities = 500'000'000;
+            if (header.activityCount > kMaxActivities || header.activityDataOffset == 0) {
+                LOG_ERROR(QString("VehicleIndex::loadFile: bad activity table "
+                                  "(count=%1, offset=%2) in %3")
+                    .arg(header.activityCount).arg(header.activityDataOffset).arg(path));
+                return false;
+            }
+            in.clear();
+            in.seekg(static_cast<std::streamoff>(header.activityDataOffset));
+            activities_.resize(header.activityCount);
+            in.read(reinterpret_cast<char*>(activities_.data()),
+                    static_cast<std::streamsize>(
+                        static_cast<size_t>(header.activityCount) * sizeof(ActivityRecord)));
+            if (in.gcount() != static_cast<std::streamsize>(
+                    static_cast<size_t>(header.activityCount) * sizeof(ActivityRecord))) {
+                LOG_ERROR(QString("VehicleIndex::loadFile: short read on activities in %1")
+                    .arg(path));
+                return false;
+            }
+        }
+
         // Build lookup maps for transit services and occupancy
         buildTripLookups();
 
         LOG_INFO(QString("VehicleIndex loaded: %1 vehicles, %2 segments, %3 persons, "
-                         "%4 trips, %5 transit services, t=[%6s,%7s]")
+                         "%4 trips, %5 transit services, %6 activities, t=[%7s,%8s]")
             .arg(header.vehicleCount)
             .arg(header.totalSegments)
             .arg(header.personCount)
             .arg(header.totalTrips)
             .arg(serviceCount)
+            .arg(header.activityCount)
             .arg(toSeconds(header.minTimeMs), 0, 'f', 1)
             .arg(toSeconds(header.maxTimeMs), 0, 'f', 1));
         return true;

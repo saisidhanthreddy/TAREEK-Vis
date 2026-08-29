@@ -46,8 +46,33 @@ constexpr LinkId   TRIP_NO_LINK  = 0xFFFFFFFF;
 constexpr uint16_t TRIP_FLAG_TELEPORTED    = 1 << 0;
 constexpr uint16_t TRIP_FLAG_TRANSIT_RIDER = 1 << 1;
 
-// Binary file header for .vidx v3 files (96 bytes: 6xu32 + 4xu64 + 2xu32 + 4xu64,
-// naturally packed — u64 fields land on 8-byte boundaries with no padding)
+// One MATSim activity occurrence, at its true location.
+//
+// MATSim actstart/actend events carry x/y attributes giving the activity's
+// actual coordinates, which are far more accurate than the link geometry we
+// would otherwise fall back to (measured against a Twin Cities run: using the
+// endpoint link's to-node is a median 125 m off). Activities are also recorded
+// independently of trips so that a person's first activity of the day — which
+// has no preceding leg — is still captured.
+struct ActivityRecord {
+    float    x;              // projected CRS, same as the network
+    float    y;
+    TimeMs   startTimeMs;    // ACT_NO_TIME = in progress at start of day
+    TimeMs   endTimeMs;      // ACT_NO_TIME = still in progress at end of day
+    LinkId   linkId;         // link the activity is attached to (TRIP_NO_LINK if absent)
+    uint32_t personId;
+    uint16_t actTypeId;      // index into actTypeStrings_
+    uint16_t flags;          // bit0: coordinates were derived, not from the event
+};
+static_assert(sizeof(ActivityRecord) == 28, "ActivityRecord must be 28 bytes");
+
+constexpr TimeMs   ACT_NO_TIME = 0xFFFFFFFF;
+// Set when x/y were absent from the event and we fell back to link geometry.
+constexpr uint16_t ACT_FLAG_DERIVED_COORD = 1 << 0;
+
+// Binary file header for .vidx v4 files (112 bytes: 6xu32 + 4xu64 + 2xu32 + 4xu64
+// + 1xu32 + 1xu32 + 1xu64, naturally packed — u64 fields land on 8-byte
+// boundaries with no padding)
 struct VehicleIndexHeader {
     uint32_t magic;                  // VIDX_FILE_MAGIC
     uint32_t version;                // VIDX_FILE_VERSION
@@ -65,11 +90,16 @@ struct VehicleIndexHeader {
     uint64_t vehicleDriverOffset;    // per-vehicle uint32 (personId+1, 0 = none)
     uint64_t transitServiceOffset;   // uint32 count + TransitService records
     uint64_t stringTablesOffset;     // 6 sequential StringInterner blobs
+    uint32_t activityCount;          // v4: total ActivityRecords
+    uint32_t reserved;               // v4: padding, keeps activityDataOffset 8-aligned
+    uint64_t activityDataOffset;     // v4: packed ActivityRecord data
 };
-static_assert(sizeof(VehicleIndexHeader) == 96, "VehicleIndexHeader must be 96 bytes");
+static_assert(sizeof(VehicleIndexHeader) == 112, "VehicleIndexHeader must be 112 bytes");
 
 constexpr uint32_t VIDX_FILE_MAGIC   = 0x56494458;  // "VIDX"
-constexpr uint32_t VIDX_FILE_VERSION = 3;
+// v4 adds the activity table (ActivityRecord). A version bump forces a one-time
+// automatic re-preprocess, which is how older caches are retired.
+constexpr uint32_t VIDX_FILE_VERSION = 4;
 
 // Pre-computed per-vehicle index for fast active-vehicle queries
 class VehicleIndex {
@@ -139,6 +169,16 @@ public:
     // subtracts the driver for transit vehicles if desired)
     int passengersAboard(VehicleId id, TimeMs time) const;
 
+    // --- Activity queries (v4) ---
+
+    // Every activity in the scenario, in event order (therefore time-ordered).
+    const std::vector<ActivityRecord>& activities() const { return activities_; }
+    size_t activityCount() const { return activities_.size(); }
+
+    // Indices into activities() for one person, in chronological order.
+    // Returns nullptr if the person has no recorded activities.
+    const std::vector<uint32_t>* activitiesForPerson(uint32_t personId) const;
+
     // --- String lookups (empty string on invalid/sentinel id) ---
     QString vehicleIdString(VehicleId id) const;
     QString personIdString(uint32_t personId) const;
@@ -156,6 +196,10 @@ public:
     std::vector<std::vector<PersonTrip>> personTrips_;  // per person
     std::vector<uint32_t> driverOfVehicle_;             // per vehicle: personId+1, 0 = none
     std::vector<TransitService> transitServices_;
+
+    // All activities, flat and in event order. Indexed per person by
+    // activitiesByPerson_, which buildTripLookups() derives.
+    std::vector<ActivityRecord> activities_;
 
     // Occupancy: who is in which vehicle when (built by parser, rebuilt at load
     // from serialized trips is NOT possible for pt riders' exact board/alight
@@ -185,6 +229,9 @@ private:
     // vehicleId -> intervals a person is aboard (from vehicle trips)
     struct Occupancy { TimeMs enterMs; TimeMs leaveMs; uint32_t personId; };
     std::unordered_map<uint32_t, std::vector<Occupancy>> occupancy_;
+
+    // personId -> indices into activities_, chronological
+    std::unordered_map<uint32_t, std::vector<uint32_t>> activitiesByPerson_;
 };
 
 } // namespace simvis
