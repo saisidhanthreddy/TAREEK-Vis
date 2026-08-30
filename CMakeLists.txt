@@ -34,8 +34,8 @@ set(SOURCES
     src/renderer/person_route_renderer.cpp
     src/renderer/halo_renderer.cpp
     src/renderer/tile_renderer.cpp
-    src/renderer/link_volume_renderer.cpp
     src/renderer/activity_density_renderer.cpp
+    src/renderer/activity_density_builder.cpp
     src/ui/main_window.cpp
     src/ui/map_widget.cpp
     src/ui/info_panel.cpp
@@ -68,8 +68,8 @@ set(HEADERS
     src/renderer/person_route_renderer.h
     src/renderer/halo_renderer.h
     src/renderer/tile_renderer.h
-    src/renderer/link_volume_renderer.h 
     src/renderer/activity_density_renderer.h
+    src/renderer/activity_density_builder.h
     src/core/crs_transform.h
     src/ui/main_window.h
     src/ui/map_widget.h

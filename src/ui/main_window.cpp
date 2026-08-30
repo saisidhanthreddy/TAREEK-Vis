@@ -5,6 +5,7 @@
 #include "counts_chart_dialog.h"
 #include "core/config.h"
 #include "core/logger.h"
+#include "renderer/activity_density_builder.h"
 
 #include <QMenuBar>
 #include <QMenu>
@@ -154,9 +155,12 @@ void MainWindow::setupUi() {
         LOG_INFO("Background volume aggregation completed.");
     });
     
-    connect(&densityWatcher_, &QFutureWatcher<std::vector<float>>::finished, this, [this]() {
-        mapWidget_->setActivityDensityData(densityWatcher_.result());
-        LOG_INFO("Background density aggregation completed.");
+    connect(&densityWatcher_, &QFutureWatcher<ActivityDensityData>::finished, this, [this]() {
+        ActivityDensityData data = densityWatcher_.result();
+        rebuildActivityLayersMenu(data.layers);
+        showActivityDensityAction_->setEnabled(!data.layers.empty());
+        mapWidget_->setActivityDensityData(std::move(data));
+        LOG_INFO("Background activity-density aggregation completed.");
     });
 }
 
@@ -202,15 +206,15 @@ void MainWindow::setupMenus() {
     showLinksAction_->setChecked(true);
     connect(showLinksAction_, &QAction::toggled, this, &MainWindow::onShowLinksToggled);
 
-    showLinkVolumesAction_ = viewMenu->addAction("Show Daily &Volume Heatmap");
-    showLinkVolumesAction_->setCheckable(true);
-    showLinkVolumesAction_->setChecked(false);
-    connect(showLinkVolumesAction_, &QAction::toggled, this, &MainWindow::onShowLinkVolumesToggled);
-
     showActivityDensityAction_ = viewMenu->addAction("Show Activity &Density Heatmap");
     showActivityDensityAction_->setCheckable(true);
     showActivityDensityAction_->setChecked(false);
+    showActivityDensityAction_->setEnabled(false);  // Enabled once plans are aggregated
     connect(showActivityDensityAction_, &QAction::toggled, this, &MainWindow::onShowActivityDensityToggled);
+
+    // One entry per activity type, filled in when the aggregation finishes
+    activityLayersMenu_ = viewMenu->addMenu("Activity &Types");
+    activityLayersMenu_->setEnabled(false);
 
     showCountsAction_ = viewMenu->addAction("Show Link &Counts");
     showCountsAction_->setCheckable(true);
@@ -898,68 +902,12 @@ void MainWindow::loadBinaryFiles() {
     });
     volumeWatcher_.setFuture(future);
 
+    // Activity density is aggregated on a worker thread on load, once. paintGL()
+    // only uploads and draws the finished buffer.
     NetworkIndex* nIdx = networkIndex_.get();
-    QFuture<std::vector<float>> densityFuture = QtConcurrent::run([vIdx, nIdx]() {
-        std::vector<float> vertices;
-        if (!vIdx || !nIdx) return vertices;
-        
-        // Color Palette based on activity type
-        auto getColor = [](const QString& act) -> std::tuple<float, float, float> {
-            if (act.contains("home", Qt::CaseInsensitive)) 
-                return {0.1f, 0.5f, 1.0f}; // Blue
-            if (act.contains("work", Qt::CaseInsensitive)) 
-                return {1.0f, 0.1f, 0.3f}; // Red/Pink
-            if (act.contains("shop", Qt::CaseInsensitive) || act.contains("leisure", Qt::CaseInsensitive)) 
-                return {0.2f, 1.0f, 0.2f}; // Green
-            return {1.0f, 0.8f, 0.1f}; // Yellow/Orange fallback
-        };
-
-        auto addQuad = [&](uint32_t linkId, const QString& actType) {
-            if (linkId == 0xFFFFFFFFu) return;
-            const auto* link = nIdx->getLink(linkId);
-            if (!link) return;
-            const auto* node = nIdx->getNode(link->toNode);
-            if (!node) return;
-
-            auto [r, g, b] = getColor(actType);
-            float cx = node->x;
-            float cy = node->y;
-            float radius = 400.0f; // Soft glow radius in world meters
-
-            // Helper to push a single vertex
-            auto pushVert = [&](float dx, float dy, float u, float v) {
-                vertices.push_back(cx + dx); vertices.push_back(cy + dy);
-                vertices.push_back(r); vertices.push_back(g); vertices.push_back(b);
-                vertices.push_back(u); vertices.push_back(v);
-            };
-
-            // Triangle 1 (Top-Left, Bottom-Left, Bottom-Right)
-            pushVert(-radius,  radius, -1.0f,  1.0f);
-            pushVert(-radius, -radius, -1.0f, -1.0f);
-            pushVert( radius, -radius,  1.0f, -1.0f);
-
-            // Triangle 2 (Top-Left, Bottom-Right, Top-Right)
-            pushVert(-radius,  radius, -1.0f,  1.0f);
-            pushVert( radius, -radius,  1.0f, -1.0f);
-            pushVert( radius,  radius,  1.0f,  1.0f);
-        };
-
-        size_t personCount = vIdx->personCount();
-        for (size_t i = 0; i < personCount; ++i) {
-            const auto* trips = vIdx->personTrips(static_cast<uint32_t>(i));
-            if (!trips) continue;
-            for (const auto& trip : *trips) {
-                if (trip.fromActTypeId != 0xFFFF) {
-                    addQuad(trip.fromLinkId, vIdx->actTypeString(trip.fromActTypeId));
-                }
-                if (trip.toActTypeId != 0xFFFF) {
-                    addQuad(trip.toLinkId, vIdx->actTypeString(trip.toActTypeId));
-                }
-            }
-        }
-        return vertices;
-    });
-    densityWatcher_.setFuture(densityFuture);
+    densityWatcher_.setFuture(QtConcurrent::run([vIdx, nIdx]() {
+        return buildActivityDensity(vIdx, nIdx);
+    }));
 }
 
 void MainWindow::applyTransitData() {
@@ -1321,12 +1269,37 @@ void MainWindow::onShowLinksToggled(bool checked) {
     mapWidget_->setShowLinks(checked);
 }
 
-void MainWindow::onShowLinkVolumesToggled(bool checked) {
-    mapWidget_->setShowLinkVolumes(checked);
-}
-
 void MainWindow::onShowActivityDensityToggled(bool checked) {
     mapWidget_->setShowActivityDensity(checked);
+    if (activityLayersMenu_) {
+        activityLayersMenu_->setEnabled(checked && !activityLayersMenu_->isEmpty());
+    }
+}
+
+void MainWindow::rebuildActivityLayersMenu(const std::vector<ActivityDensityLayer>& layers) {
+    if (!activityLayersMenu_) return;
+
+    activityLayersMenu_->clear();
+    if (layers.empty()) {
+        activityLayersMenu_->setEnabled(false);
+        return;
+    }
+
+    // No icons here: Qt drops the check indicator for actions that have one,
+    // which would hide whether a layer is on. The map legend carries the colors
+    // and lists only the layers currently enabled.
+    for (size_t i = 0; i < layers.size(); ++i) {
+        const auto& layer = layers[i];
+        auto* action = activityLayersMenu_->addAction(
+            QString("%1  (%2)").arg(layer.name).arg(layer.totalCount));
+        action->setCheckable(true);
+        action->setChecked(layer.visible);
+        connect(action, &QAction::toggled, this, [this, i](bool on) {
+            mapWidget_->setActivityDensityLayerVisible(i, on);
+        });
+    }
+
+    activityLayersMenu_->setEnabled(showActivityDensityAction_->isChecked());
 }
 
 void MainWindow::onShowVehiclesToggled(bool checked) {

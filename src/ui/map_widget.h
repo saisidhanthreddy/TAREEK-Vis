@@ -15,8 +15,9 @@
 #include "renderer/tile_renderer.h"
 #include "data/network_index.h"
 #include "data/vehicle_index.h"
-#include "renderer/link_volume_renderer.h"
 #include "renderer/activity_density_renderer.h"
+
+class QPainter;
 
 namespace simvis {
 
@@ -60,14 +61,12 @@ public:
     void setShowTrams(bool show);
     void setShowRailVehicles(bool show);
     
-    // Feature Enhancement: Link Volume Heatmap
-    void setShowLinkVolumes(bool show);
-    bool showLinkVolumes() const { return showLinkVolumes_; }
-
-    // Feature Enhancement: Activity Density Heatmap
+    // Activity density heatmap (one colored layer per activity type)
     void setShowActivityDensity(bool show);
-    void setActivityDensityData(const std::vector<float>& data);
+    void setActivityDensityData(ActivityDensityData data);
     bool showActivityDensity() const { return showActivityDensity_; }
+    const std::vector<ActivityDensityLayer>& activityDensityLayers() const;
+    void setActivityDensityLayerVisible(size_t index, bool visible);
 
     // Vehicle rendering options
     void setVehicleSize(float size);
@@ -162,6 +161,9 @@ private slots:
 private:
     void updateProjection();
     void updateView();
+
+    // Color key for the activity density layers, drawn over the GL frame
+    void drawActivityDensityLegend(QPainter& painter);
     void updateVehicleHalo();  // sync tracked-vehicle halo position/visibility
 
     // Nearest network link to a world point within radius (UINT32_MAX = none)
@@ -178,11 +180,14 @@ private:
     std::unique_ptr<HaloRenderer> vehicleHaloRenderer_;  // cyan ring on tracked vehicle
     std::unique_ptr<HaloRenderer> countsHaloRenderer_;   // cyan rings on count stations
     
-    // Feature Enhancement: Link Volume Heatmap Renderer
-    std::unique_ptr<LinkVolumeRenderer> linkVolumeRenderer_;
-
-    // Feature Enhancement: Activity Density Renderer
+    // Activity density heatmap
     std::unique_ptr<ActivityDensityRenderer> activityDensityRenderer_;
+
+    // Aggregated off the render thread, uploaded from paintGL() where the GL
+    // context is guaranteed current. Holding it here also covers the case where
+    // the data arrives before initializeGL() has run.
+    ActivityDensityData pendingDensityData_;
+    bool densityUploadPending_ = false;
 
     // Activity markers painted via QPainter on top of the GL frame
     std::vector<ActivityMarker> activityMarkers_;
@@ -222,8 +227,7 @@ private:
     bool showNodes_ = false;  // Off by default (View > Show Nodes)
     bool showLinks_ = true;
     bool showVehicles_ = true;
-    bool showLinkVolumes_ = false; // Off by default
-    bool showActivityDensity_ = false; // Off by default
+    bool showActivityDensity_ = false;  // Off by default
 
     // Vehicle tracking
     uint32_t trackedVehicleId_ = 0;  // 0 = not tracking any vehicle

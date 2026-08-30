@@ -1,7 +1,6 @@
 #include "map_widget.h"
 #include "core/video_recorder.h"
 #include "core/logger.h"
-#include "renderer/link_volume_renderer.h"
 #include "renderer/activity_density_renderer.h"
 #include <QMouseEvent>
 #include <QWheelEvent>
@@ -30,7 +29,6 @@ MapWidget::~MapWidget() {
     networkRenderer_.reset();
     vehicleRenderer_.reset();
     tileRenderer_.reset();
-    linkVolumeRenderer_.reset();
     activityDensityRenderer_.reset();
     doneCurrent();
 }
@@ -46,9 +44,6 @@ void MapWidget::setNetworkIndex(NetworkIndex* index) {
     if (transitRouteRenderer_) {
         transitRouteRenderer_->setNetworkIndex(index);
     }
-    if (linkVolumeRenderer_) {
-        linkVolumeRenderer_->setIndices(index, vehicleIndex_);
-    }
     fitToNetwork();
     update();
 }
@@ -57,9 +52,6 @@ void MapWidget::setVehicleIndex(VehicleIndex* index) {
     vehicleIndex_ = index;
     if (vehicleRenderer_) {
         vehicleRenderer_->setVehicleIndex(index);
-    }
-    if (linkVolumeRenderer_) {
-        linkVolumeRenderer_->setIndices(networkIndex_, index);
     }
     if (index) {
         minTime_ = VehicleIndex::toSeconds(index->minTime());
@@ -508,8 +500,8 @@ void MapWidget::initializeGL() {
     }
 
     activityDensityRenderer_->setVisible(showActivityDensity_);
-    countsRenderer_ = std::make_unique<CountsRenderer>();
-    personRouteRenderer_ = std::make_unique<PersonRouteRenderer>();
+    // Re-upload after a context loss, and cover data that arrived before now
+    if (!pendingDensityData_.vertices.empty()) densityUploadPending_ = true;
 
     countsRenderer_ = std::make_unique<CountsRenderer>();
     personRouteRenderer_ = std::make_unique<PersonRouteRenderer>();
@@ -589,11 +581,13 @@ void MapWidget::paintGL() {
         if (networkRenderer_) {
             networkRenderer_->render();
         }
-        // Render link volumes(Heatmap)
-        if (showLinkVolumes_ && linkVolumeRenderer_) {
-            linkVolumeRenderer_->render();
+        // Activity density heatmap. The upload happens here rather than where
+        // the aggregation finishes, because that runs outside paintGL() with no
+        // current GL context — the buffer upload would silently do nothing.
+        if (densityUploadPending_ && activityDensityRenderer_) {
+            activityDensityRenderer_->setDensityData(pendingDensityData_);
+            densityUploadPending_ = false;
         }
-        // Render Activity Density Heatmap
         if (showActivityDensity_ && activityDensityRenderer_) {
             activityDensityRenderer_->render();
         }
@@ -666,6 +660,13 @@ void MapWidget::paintGL() {
             }
         }
 
+        // Color key for the density layers, so the activity types are readable
+        if (showActivityDensity_) {
+            QPainter painter(this);
+            painter.setRenderHint(QPainter::Antialiasing);
+            drawActivityDensityLegend(painter);
+        }
+
         // Submit frame to video recorder if recording
         if (videoRecorder_ && videoRecorder_->isRecording()) {
             try {
@@ -677,6 +678,67 @@ void MapWidget::paintGL() {
         }
     } catch (const std::exception& e) {
         LOG_ERROR(QString("paintGL exception: %1").arg(e.what()));
+    }
+}
+
+void MapWidget::drawActivityDensityLegend(QPainter& painter) {
+    const auto& layers = activityDensityLayers();
+    if (layers.empty()) return;
+
+    QFont titleFont = painter.font();
+    titleFont.setPointSize(9);
+    titleFont.setBold(true);
+    QFont itemFont = painter.font();
+    itemFont.setPointSize(9);
+
+    const int rowHeight = 18;
+    const int padding = 10;
+    const int swatch = 10;
+
+    // Width from the longest label so long activity names are not clipped
+    painter.setFont(titleFont);
+    int textWidth = painter.fontMetrics().horizontalAdvance(QStringLiteral("Activity density"));
+    painter.setFont(itemFont);
+    int visibleRows = 0;
+    for (const auto& layer : layers) {
+        if (!layer.visible) continue;
+        ++visibleRows;
+        textWidth = std::max(textWidth,
+                             painter.fontMetrics().horizontalAdvance(layer.name));
+    }
+    if (visibleRows == 0) return;
+
+    const int boxWidth = padding * 2 + swatch + 8 + textWidth;
+    const int boxHeight = padding * 2 + rowHeight * (visibleRows + 1);
+    const QRect box(12, height() - boxHeight - 12, boxWidth, boxHeight);
+
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 0, 170));
+    painter.drawRoundedRect(box, 6, 6);
+
+    painter.setFont(titleFont);
+    painter.setPen(QColor(210, 210, 215));
+    painter.drawText(QRect(box.left() + padding, box.top() + padding,
+                           boxWidth - padding * 2, rowHeight),
+                     Qt::AlignLeft | Qt::AlignVCenter,
+                     QStringLiteral("Activity density"));
+
+    painter.setFont(itemFont);
+    int row = 1;
+    for (const auto& layer : layers) {
+        if (!layer.visible) continue;
+        const int y = box.top() + padding + row * rowHeight;
+
+        painter.setPen(Qt::NoPen);
+        painter.setBrush(QColor::fromRgbF(layer.r, layer.g, layer.b));
+        painter.drawEllipse(QRect(box.left() + padding,
+                                  y + (rowHeight - swatch) / 2, swatch, swatch));
+
+        painter.setPen(Qt::white);
+        painter.drawText(QRect(box.left() + padding + swatch + 8, y,
+                               boxWidth - padding * 2 - swatch - 8, rowHeight),
+                         Qt::AlignLeft | Qt::AlignVCenter, layer.name);
+        ++row;
     }
 }
 
@@ -716,7 +778,6 @@ void MapWidget::updateProjection() {
     }
     if (vehicleHaloRenderer_) vehicleHaloRenderer_->setProjectionMatrix(projectionMatrix_);
     if (countsHaloRenderer_)  countsHaloRenderer_->setProjectionMatrix(projectionMatrix_);
-    if (linkVolumeRenderer_) linkVolumeRenderer_->setProjectionMatrix(projectionMatrix_);
     if (activityDensityRenderer_) activityDensityRenderer_->setProjectionMatrix(projectionMatrix_);
 }
 
@@ -744,7 +805,6 @@ void MapWidget::updateView() {
     }
     if (vehicleHaloRenderer_) vehicleHaloRenderer_->setViewMatrix(viewMatrix_);
     if (countsHaloRenderer_)  countsHaloRenderer_->setViewMatrix(viewMatrix_);
-    if (linkVolumeRenderer_) linkVolumeRenderer_->setViewMatrix(viewMatrix_);
     if (activityDensityRenderer_) activityDensityRenderer_->setViewMatrix(viewMatrix_);
 
     updateProjection();
@@ -1068,13 +1128,6 @@ QImage MapWidget::renderToImage(int scaleFactor) {
 
     return image;
 }
-void MapWidget::setShowLinkVolumes(bool show) {
-    showLinkVolumes_ = show;
-    if (linkVolumeRenderer_) {
-        linkVolumeRenderer_->setVisible(show);
-    }
-    update();
-}
 void MapWidget::setShowActivityDensity(bool show) {
     showActivityDensity_ = show;
     if (activityDensityRenderer_) {
@@ -1082,9 +1135,25 @@ void MapWidget::setShowActivityDensity(bool show) {
     }
     update();
 }
-void MapWidget::setActivityDensityData(const std::vector<float>& data) {
+
+void MapWidget::setActivityDensityData(ActivityDensityData data) {
+    pendingDensityData_ = std::move(data);
+    densityUploadPending_ = true;
+    update();  // paintGL() performs the upload with a current context
+}
+
+const std::vector<ActivityDensityLayer>& MapWidget::activityDensityLayers() const {
+    // pendingDensityData_ stays the source of truth so per-layer visibility
+    // survives a re-upload
+    return pendingDensityData_.layers;
+}
+
+void MapWidget::setActivityDensityLayerVisible(size_t index, bool visible) {
+    if (index < pendingDensityData_.layers.size()) {
+        pendingDensityData_.layers[index].visible = visible;
+    }
     if (activityDensityRenderer_) {
-        activityDensityRenderer_->setDensityData(data);
+        activityDensityRenderer_->setLayerVisible(index, visible);
     }
     update();
 }

@@ -55,7 +55,6 @@ private slots:
     void onShowNodesToggled(bool checked);
     void onShowLinksToggled(bool checked);
     void onShowVehiclesToggled(bool checked);
-    void onShowLinkVolumesToggled(bool checked);
     void onShowActivityDensityToggled(bool checked);
     void onFitToNetwork();
 
@@ -113,6 +112,9 @@ private:
     void setupUi();
     void setupMenus();
     void setupStatusBar();
+
+    // Fills View > Activity Types with one checkbox per activity type found
+    void rebuildActivityLayersMenu(const std::vector<ActivityDensityLayer>& layers);
 
     // Common tail of all open flows: set paths, title, cache dir, then load
     // from cache or start preprocessing. Transit path may be empty.
@@ -182,7 +184,6 @@ private:
     QAction* showNodesAction_;
     QAction* showLinksAction_;
     QAction* showVehiclesAction_;
-    QAction* showLinkVolumesAction_;
     QAction* showActivityDensityAction_;
     QAction* showCarsAction_;
     QAction* showBusVehiclesAction_;
@@ -232,7 +233,8 @@ private:
     std::unordered_map<uint32_t, std::vector<uint32_t>> linkHourlyVolumes_;
     QFutureWatcher<std::unordered_map<uint32_t, std::vector<uint32_t>>> volumeWatcher_;
 
-    QFutureWatcher<std::vector<float>> densityWatcher_;
+    QFutureWatcher<ActivityDensityData> densityWatcher_;
+    QMenu* activityLayersMenu_ = nullptr;
 
     // Throttle for live vehicle-info panel refresh (sim seconds of last update)
     float lastVehicleInfoRefreshTime_ = -1.0f;
