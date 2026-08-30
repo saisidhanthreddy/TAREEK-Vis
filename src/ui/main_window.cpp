@@ -30,6 +30,10 @@
 #include <QProgressDialog>
 #include <QInputDialog>
 #include <QSettings>
+#include <QDragEnterEvent>
+#include <QDropEvent>
+#include <QMimeData>
+#include <QUrl>
 #include <algorithm>
 #include <cmath>
 #include <tuple>
@@ -41,6 +45,7 @@ MainWindow::MainWindow(QWidget* parent)
 {
     setWindowTitle("TAREEK-Vis - Simulation Visualizer");
     resize(1280, 800);
+    setAcceptDrops(true);
 
     setupUi();
     setupMenus();
@@ -1536,6 +1541,46 @@ void MainWindow::keyPressEvent(QKeyEvent* event) {
         default:
             QMainWindow::keyPressEvent(event);
     }
+}
+
+namespace {
+
+// A drop is loadable if it carries a directory, or a file we can take the
+// containing directory from. loadFolder() then does the usual resolution, so a
+// user can drag either the scenario folder or any one file inside it.
+QString droppedScenarioPath(const QMimeData* mime) {
+    if (!mime || !mime->hasUrls()) return QString();
+
+    for (const QUrl& url : mime->urls()) {
+        if (!url.isLocalFile()) continue;
+        const QFileInfo info(url.toLocalFile());
+        if (info.isDir()) return info.absoluteFilePath();
+        if (info.isFile()) {
+            const QString name = info.fileName();
+            if (name.endsWith(".xml", Qt::CaseInsensitive) ||
+                name.endsWith(".xml.gz", Qt::CaseInsensitive)) {
+                return info.absolutePath();
+            }
+        }
+    }
+    return QString();
+}
+
+} // namespace
+
+void MainWindow::dragEnterEvent(QDragEnterEvent* event) {
+    if (!droppedScenarioPath(event->mimeData()).isEmpty()) {
+        event->acceptProposedAction();
+    }
+}
+
+void MainWindow::dropEvent(QDropEvent* event) {
+    const QString path = droppedScenarioPath(event->mimeData());
+    if (path.isEmpty()) return;
+
+    event->acceptProposedAction();
+    LOG_INFO(QString("Scenario dropped onto window: %1").arg(path));
+    loadFolder(path);
 }
 
 void MainWindow::closeEvent(QCloseEvent* event) {

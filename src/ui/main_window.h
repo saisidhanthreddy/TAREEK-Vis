@@ -47,6 +47,12 @@ protected:
     void keyPressEvent(QKeyEvent* event) override;
     void closeEvent(QCloseEvent* event) override;
 
+    // Dropping a scenario folder onto the window loads it. Finding the right
+    // three files inside a MATSim output directory is the step users get wrong
+    // most often, and dragging the folder skips it entirely.
+    void dragEnterEvent(QDragEnterEvent* event) override;
+    void dropEvent(QDropEvent* event) override;
+
 private slots:
     // Compute and show the density map for one activity type. Runs on a worker
     // thread, because a computation takes seconds.

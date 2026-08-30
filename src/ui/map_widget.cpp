@@ -696,6 +696,13 @@ void MapWidget::paintGL() {
             drawHeatmapLegend(painter, size(), 1.0);
         }
 
+        // Nothing loaded yet: say how to load something
+        if (!networkIndex_ || networkIndex_->nodeCount() == 0) {
+            QPainter painter(this);
+            painter.setRenderHint(QPainter::Antialiasing);
+            drawEmptyState(painter);
+        }
+
         // Submit frame to video recorder if recording
         if (videoRecorder_ && videoRecorder_->isRecording()) {
             try {
@@ -708,6 +715,30 @@ void MapWidget::paintGL() {
     } catch (const std::exception& e) {
         LOG_ERROR(QString("paintGL exception: %1").arg(e.what()));
     }
+}
+
+void MapWidget::drawEmptyState(QPainter& painter) {
+    QFont titleFont = painter.font();
+    titleFont.setPointSize(15);
+    QFont hintFont = painter.font();
+    hintFont.setPointSize(10);
+
+    const QRect area = rect();
+
+    painter.setFont(titleFont);
+    painter.setPen(QColor(190, 190, 200));
+    painter.drawText(QRect(area.left(), area.center().y() - 34, area.width(), 30),
+                     Qt::AlignHCenter | Qt::AlignVCenter,
+                     tr("Drop a MATSim output folder here"));
+
+    painter.setFont(hintFont);
+    painter.setPen(QColor(130, 130, 140));
+    painter.drawText(QRect(area.left(), area.center().y() + 2, area.width(), 22),
+                     Qt::AlignHCenter | Qt::AlignVCenter,
+                     tr("or use File > Open Folder"));
+    painter.drawText(QRect(area.left(), area.center().y() + 26, area.width(), 22),
+                     Qt::AlignHCenter | Qt::AlignVCenter,
+                     tr("The network, events and transit files are found for you."));
 }
 
 void MapWidget::updateProjection() {
