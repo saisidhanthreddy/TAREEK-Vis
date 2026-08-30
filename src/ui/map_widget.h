@@ -4,7 +4,10 @@
 #include <QTimer>
 #include <QElapsedTimer>
 #include <QImage>
+#include <QSize>
 #include <memory>
+
+class QPainter;
 
 #include "renderer/network_renderer.h"
 #include "renderer/vehicle_renderer.h"
@@ -13,9 +16,9 @@
 #include "renderer/person_route_renderer.h"
 #include "renderer/halo_renderer.h"
 #include "renderer/tile_renderer.h"
+#include "renderer/heatmap_renderer.h"
 #include "data/network_index.h"
 #include "data/vehicle_index.h"
-#include "renderer/activity_density_renderer.h"
 
 class QPainter;
 
@@ -60,13 +63,6 @@ public:
     void setShowBuses(bool show);
     void setShowTrams(bool show);
     void setShowRailVehicles(bool show);
-    
-    // Activity density heatmap (one colored layer per activity type)
-    void setShowActivityDensity(bool show);
-    void setActivityDensityData(ActivityDensityData data);
-    bool showActivityDensity() const { return showActivityDensity_; }
-    const std::vector<ActivityDensityLayer>& activityDensityLayers() const;
-    void setActivityDensityLayerVisible(size_t index, bool visible);
 
     // Vehicle rendering options
     void setVehicleSize(float size);
@@ -116,6 +112,21 @@ public:
     };
     void setActivityMarkers(const std::vector<ActivityMarker>& markers);
 
+    // Density heatmap overlay. An empty vector clears it. `lixelSize` is the
+    // lixel length used for the computation, in meters, which sets the mark
+    // size. `title` names the map in the legend, e.g. "Home".
+    void setHeatmap(const std::vector<NkdvNetwork::Lixel>& lixels,
+                    float lixelSize, const QString& title);
+    void setHeatmapVisible(bool visible);
+    bool heatmapVisible() const;
+    void clearHeatmap();
+
+    // Anchor the top of the color ramp at a shared value, so maps of different
+    // activity types can be compared. Pass 0 to scale each map by its own peak.
+    void setHeatmapScaleMax(float value);
+    // Peak density of the map currently shown, or 0 when there is none.
+    float heatmapPeak() const;
+
     // Highlight a single network link (yellow band, reuses the route overlay).
     void highlightLink(uint32_t linkId);
     // Clear every transient highlight/overlay (route, link, vehicle track,
@@ -134,6 +145,12 @@ public:
     // size (1=native). Used for high-resolution PNG/PDF export. Returns a null
     // QImage on failure. The visible widget is left unchanged.
     QImage renderToImage(int scaleFactor);
+
+    // Draw the heatmap key onto any paint device. The legend is a QPainter
+    // overlay rather than GL, so both the live widget and the off-screen
+    // export have to ask for it. `scale` multiplies every size so the key
+    // keeps its on-screen proportions in a high-resolution export.
+    void drawHeatmapLegend(QPainter& painter, const QSize& deviceSize, qreal scale);
 
 signals:
     void simulationTimeChanged(float time);
@@ -161,9 +178,6 @@ private slots:
 private:
     void updateProjection();
     void updateView();
-
-    // Color key for the activity density layers, drawn over the GL frame
-    void drawActivityDensityLegend(QPainter& painter);
     void updateVehicleHalo();  // sync tracked-vehicle halo position/visibility
 
     // Nearest network link to a world point within radius (UINT32_MAX = none)
@@ -177,21 +191,16 @@ private:
     std::unique_ptr<TransitRouteRenderer> transitRouteRenderer_;
     std::unique_ptr<CountsRenderer> countsRenderer_;
     std::unique_ptr<PersonRouteRenderer> personRouteRenderer_;
+    std::unique_ptr<HeatmapRenderer> heatmapRenderer_;
     std::unique_ptr<HaloRenderer> vehicleHaloRenderer_;  // cyan ring on tracked vehicle
     std::unique_ptr<HaloRenderer> countsHaloRenderer_;   // cyan rings on count stations
-    
-    // Activity density heatmap
-    std::unique_ptr<ActivityDensityRenderer> activityDensityRenderer_;
-
-    // Aggregated off the render thread, uploaded from paintGL() where the GL
-    // context is guaranteed current. Holding it here also covers the case where
-    // the data arrives before initializeGL() has run.
-    ActivityDensityData pendingDensityData_;
-    bool densityUploadPending_ = false;
 
     // Activity markers painted via QPainter on top of the GL frame
     std::vector<ActivityMarker> activityMarkers_;
     bool activityMarkersVisible_ = false;
+
+    // Legend text for the density heatmap, e.g. "Home".
+    QString heatmapTitle_;
 
     // Data sources (not owned)
     NetworkIndex* networkIndex_ = nullptr;
@@ -227,7 +236,6 @@ private:
     bool showNodes_ = false;  // Off by default (View > Show Nodes)
     bool showLinks_ = true;
     bool showVehicles_ = true;
-    bool showActivityDensity_ = false;  // Off by default
 
     // Vehicle tracking
     uint32_t trackedVehicleId_ = 0;  // 0 = not tracking any vehicle

@@ -1,7 +1,7 @@
 #include "map_widget.h"
 #include "core/video_recorder.h"
 #include "core/logger.h"
-#include "renderer/activity_density_renderer.h"
+#include "renderer/heatmap_palette.h"
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <QOpenGLFramebufferObject>
@@ -29,7 +29,6 @@ MapWidget::~MapWidget() {
     networkRenderer_.reset();
     vehicleRenderer_.reset();
     tileRenderer_.reset();
-    activityDensityRenderer_.reset();
     doneCurrent();
 }
 
@@ -394,6 +393,46 @@ void MapWidget::setActivityMarkers(const std::vector<ActivityMarker>& markers) {
     update();
 }
 
+void MapWidget::setHeatmap(const std::vector<NkdvNetwork::Lixel>& lixels,
+                           float lixelSize, const QString& title) {
+    if (!heatmapRenderer_) return;
+    heatmapRenderer_->setLixels(lixels);
+    heatmapRenderer_->setLixelSize(lixelSize);
+    heatmapTitle_ = title;
+    update();
+}
+
+void MapWidget::setHeatmapVisible(bool visible) {
+    if (!heatmapRenderer_) return;
+    heatmapRenderer_->setVisible(visible);
+    update();
+}
+
+bool MapWidget::heatmapVisible() const {
+    return heatmapRenderer_ && heatmapRenderer_->visible();
+}
+
+void MapWidget::setHeatmapScaleMax(float value) {
+    if (!heatmapRenderer_) return;
+    if (value == heatmapRenderer_->rawScaleMax()) return;  // nothing to redraw
+    heatmapRenderer_->setScaleMax(value);
+    update();
+}
+
+float MapWidget::heatmapPeak() const {
+    // The anchor, not the single highest lixel: this feeds the shared scale,
+    // which must not be set by a few extreme segments.
+    return heatmapRenderer_ ? heatmapRenderer_->anchorValue() : 0.0f;
+}
+
+void MapWidget::clearHeatmap() {
+    if (!heatmapRenderer_) return;
+    heatmapRenderer_->clear();
+    heatmapRenderer_->setVisible(false);
+    heatmapTitle_.clear();
+    update();
+}
+
 uint32_t MapWidget::findNetworkLinkAt(double worldX, double worldY, double radius) const {
     if (!networkIndex_) return 0xFFFFFFFFu;
 
@@ -494,21 +533,16 @@ void MapWidget::initializeGL() {
         LOG_WARN("Failed to initialize transit route renderer");
     }
 
-    activityDensityRenderer_ = std::make_unique<ActivityDensityRenderer>();
-    if (!activityDensityRenderer_->initialize()) {
-        LOG_WARN("Failed to initialize activity density renderer");
-    }
-
-    activityDensityRenderer_->setVisible(showActivityDensity_);
-    // Re-upload after a context loss, and cover data that arrived before now
-    if (!pendingDensityData_.vertices.empty()) densityUploadPending_ = true;
-
     countsRenderer_ = std::make_unique<CountsRenderer>();
     personRouteRenderer_ = std::make_unique<PersonRouteRenderer>();
+    heatmapRenderer_ = std::make_unique<HeatmapRenderer>();
     vehicleHaloRenderer_ = std::make_unique<HaloRenderer>();
     countsHaloRenderer_ = std::make_unique<HaloRenderer>();
     if (!countsRenderer_->initialize()) {
         LOG_WARN("Failed to initialize counts renderer");
+    }
+    if (!heatmapRenderer_->initialize()) {
+        LOG_WARN("Failed to initialize heatmap renderer");
     }
     if (!personRouteRenderer_->initialize()) {
         LOG_WARN("Failed to initialize person route renderer");
@@ -581,15 +615,10 @@ void MapWidget::paintGL() {
         if (networkRenderer_) {
             networkRenderer_->render();
         }
-        // Activity density heatmap. The upload happens here rather than where
-        // the aggregation finishes, because that runs outside paintGL() with no
-        // current GL context — the buffer upload would silently do nothing.
-        if (densityUploadPending_ && activityDensityRenderer_) {
-            activityDensityRenderer_->setDensityData(pendingDensityData_);
-            densityUploadPending_ = false;
-        }
-        if (showActivityDensity_ && activityDensityRenderer_) {
-            activityDensityRenderer_->render();
+        // Density heatmap sits directly on the roads it describes, so it is
+        // drawn just above the network and below every selection overlay.
+        if (heatmapRenderer_) {
+            heatmapRenderer_->render();
         }
 
         // Render count links overlay (above network, below transit)
@@ -660,11 +689,11 @@ void MapWidget::paintGL() {
             }
         }
 
-        // Color key for the density layers, so the activity types are readable
-        if (showActivityDensity_) {
+        // Heatmap legend. A magnitude encoding is unreadable without a key, so
+        // the ramp is drawn with its value range whenever the map is shown.
+        {
             QPainter painter(this);
-            painter.setRenderHint(QPainter::Antialiasing);
-            drawActivityDensityLegend(painter);
+            drawHeatmapLegend(painter, size(), 1.0);
         }
 
         // Submit frame to video recorder if recording
@@ -678,67 +707,6 @@ void MapWidget::paintGL() {
         }
     } catch (const std::exception& e) {
         LOG_ERROR(QString("paintGL exception: %1").arg(e.what()));
-    }
-}
-
-void MapWidget::drawActivityDensityLegend(QPainter& painter) {
-    const auto& layers = activityDensityLayers();
-    if (layers.empty()) return;
-
-    QFont titleFont = painter.font();
-    titleFont.setPointSize(9);
-    titleFont.setBold(true);
-    QFont itemFont = painter.font();
-    itemFont.setPointSize(9);
-
-    const int rowHeight = 18;
-    const int padding = 10;
-    const int swatch = 10;
-
-    // Width from the longest label so long activity names are not clipped
-    painter.setFont(titleFont);
-    int textWidth = painter.fontMetrics().horizontalAdvance(QStringLiteral("Activity density"));
-    painter.setFont(itemFont);
-    int visibleRows = 0;
-    for (const auto& layer : layers) {
-        if (!layer.visible) continue;
-        ++visibleRows;
-        textWidth = std::max(textWidth,
-                             painter.fontMetrics().horizontalAdvance(layer.name));
-    }
-    if (visibleRows == 0) return;
-
-    const int boxWidth = padding * 2 + swatch + 8 + textWidth;
-    const int boxHeight = padding * 2 + rowHeight * (visibleRows + 1);
-    const QRect box(12, height() - boxHeight - 12, boxWidth, boxHeight);
-
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(QColor(0, 0, 0, 170));
-    painter.drawRoundedRect(box, 6, 6);
-
-    painter.setFont(titleFont);
-    painter.setPen(QColor(210, 210, 215));
-    painter.drawText(QRect(box.left() + padding, box.top() + padding,
-                           boxWidth - padding * 2, rowHeight),
-                     Qt::AlignLeft | Qt::AlignVCenter,
-                     QStringLiteral("Activity density"));
-
-    painter.setFont(itemFont);
-    int row = 1;
-    for (const auto& layer : layers) {
-        if (!layer.visible) continue;
-        const int y = box.top() + padding + row * rowHeight;
-
-        painter.setPen(Qt::NoPen);
-        painter.setBrush(QColor::fromRgbF(layer.r, layer.g, layer.b));
-        painter.drawEllipse(QRect(box.left() + padding,
-                                  y + (rowHeight - swatch) / 2, swatch, swatch));
-
-        painter.setPen(Qt::white);
-        painter.drawText(QRect(box.left() + padding + swatch + 8, y,
-                               boxWidth - padding * 2 - swatch - 8, rowHeight),
-                         Qt::AlignLeft | Qt::AlignVCenter, layer.name);
-        ++row;
     }
 }
 
@@ -776,9 +744,13 @@ void MapWidget::updateProjection() {
         personRouteRenderer_->setHalfWidth(
             static_cast<float>(5.0 / std::max(zoom_, 1e-9)));
     }
+    if (heatmapRenderer_) {
+        heatmapRenderer_->setProjectionMatrix(projectionMatrix_);
+        // The mark covers one lixel of ground, so it grows with zoom.
+        heatmapRenderer_->setZoom(zoom_);
+    }
     if (vehicleHaloRenderer_) vehicleHaloRenderer_->setProjectionMatrix(projectionMatrix_);
     if (countsHaloRenderer_)  countsHaloRenderer_->setProjectionMatrix(projectionMatrix_);
-    if (activityDensityRenderer_) activityDensityRenderer_->setProjectionMatrix(projectionMatrix_);
 }
 
 void MapWidget::updateView() {
@@ -803,9 +775,11 @@ void MapWidget::updateView() {
     if (personRouteRenderer_) {
         personRouteRenderer_->setViewMatrix(viewMatrix_);
     }
+    if (heatmapRenderer_) {
+        heatmapRenderer_->setViewMatrix(viewMatrix_);
+    }
     if (vehicleHaloRenderer_) vehicleHaloRenderer_->setViewMatrix(viewMatrix_);
     if (countsHaloRenderer_)  countsHaloRenderer_->setViewMatrix(viewMatrix_);
-    if (activityDensityRenderer_) activityDensityRenderer_->setViewMatrix(viewMatrix_);
 
     updateProjection();
 }
@@ -1078,6 +1052,7 @@ QImage MapWidget::renderToImage(int scaleFactor) {
         if (personRouteRenderer_)  { personRouteRenderer_->setProjectionMatrix(proj);  personRouteRenderer_->setViewportSize(vpW, vpH); }
         if (vehicleHaloRenderer_)  { vehicleHaloRenderer_->setProjectionMatrix(proj);  vehicleHaloRenderer_->setViewportSize(vpW, vpH); }
         if (countsHaloRenderer_)   { countsHaloRenderer_->setProjectionMatrix(proj);   countsHaloRenderer_->setViewportSize(vpW, vpH); }
+        if (heatmapRenderer_)      { heatmapRenderer_->setProjectionMatrix(proj);      heatmapRenderer_->setViewportSize(vpW, vpH); }
     };
 
     applyExportState(exportProj, outW, outH);
@@ -1093,6 +1068,9 @@ QImage MapWidget::renderToImage(int scaleFactor) {
     }
     if (vehicleHaloRenderer_)  vehicleHaloRenderer_->setPointScale(static_cast<float>(scaleFactor));
     if (countsHaloRenderer_)   countsHaloRenderer_->setPointScale(static_cast<float>(scaleFactor));
+    // Lixel marks are sized in pixels from lixelSize * zoom, so they need the
+    // same correction as the other point sprites to cover the same ground.
+    if (heatmapRenderer_)      heatmapRenderer_->setPointScale(static_cast<float>(scaleFactor));
 
     fbo.bind();
     glViewport(0, 0, outW, outH);
@@ -1100,6 +1078,7 @@ QImage MapWidget::renderToImage(int scaleFactor) {
 
     if (tileRenderer_)         tileRenderer_->render();
     if (networkRenderer_)      networkRenderer_->render();
+    if (heatmapRenderer_)      heatmapRenderer_->render();
     if (countsRenderer_)       countsRenderer_->render();
     if (countsHaloRenderer_)   countsHaloRenderer_->render();
     if (transitRouteRenderer_) transitRouteRenderer_->render();
@@ -1109,6 +1088,14 @@ QImage MapWidget::renderToImage(int scaleFactor) {
 
     QImage image = fbo.toImage();
     fbo.release();
+
+    // The legend is a QPainter overlay on the live widget, not GL, so the FBO
+    // does not contain it. Paint it onto the exported image at the matching
+    // scale, or the export shows colors with nothing to read them against.
+    if (!image.isNull()) {
+        QPainter painter(&image);
+        drawHeatmapLegend(painter, image.size(), dpr * scaleFactor);
+    }
 
     // Restore live state. The renderers' live viewport size is whatever Qt last
     // passed to resizeGL (device pixels = logical size * devicePixelRatio).
@@ -1122,39 +1109,92 @@ QImage MapWidget::renderToImage(int scaleFactor) {
     }
     if (vehicleHaloRenderer_)  vehicleHaloRenderer_->setPointScale(1.0f);
     if (countsHaloRenderer_)   countsHaloRenderer_->setPointScale(1.0f);
+    if (heatmapRenderer_)      heatmapRenderer_->setPointScale(1.0f);
 
     doneCurrent();
     update();  // repaint the live widget with restored state
 
     return image;
 }
-void MapWidget::setShowActivityDensity(bool show) {
-    showActivityDensity_ = show;
-    if (activityDensityRenderer_) {
-        activityDensityRenderer_->setVisible(show);
+void MapWidget::drawHeatmapLegend(QPainter& painter, const QSize& deviceSize, qreal scale) {
+    if (!heatmapRenderer_ || !heatmapRenderer_->visible() ||
+        !heatmapRenderer_->hasData()) {
+        return;
     }
-    update();
+
+    painter.save();
+    painter.setRenderHint(QPainter::Antialiasing);
+
+    const int kBarW = static_cast<int>(180 * scale);
+    const int kBarH = static_cast<int>(12 * scale);
+    const int kPad = static_cast<int>(12 * scale);
+    const int x = kPad;
+    const int y = deviceSize.height() - kPad - kBarH - static_cast<int>(34 * scale);
+
+    // Point sizes are device independent, so an export at N x the pixels needs
+    // them multiplied by N for the text to keep its share of the image.
+    QFont titleFont = painter.font();
+    titleFont.setPointSizeF(9 * scale);
+    titleFont.setBold(true);
+    QFont tickFont = painter.font();
+    tickFont.setPointSizeF(8 * scale);
+
+    // Panel behind the key, so it stays readable over any map content.
+    QRectF panel(x - 8 * scale, y - 20 * scale,
+                 kBarW + 16 * scale, kBarH + 46 * scale);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(QColor(0, 0, 0, 170));
+    painter.drawRoundedRect(panel, 6 * scale, 6 * scale);
+
+    painter.setFont(titleFont);
+    painter.setPen(Qt::white);
+    painter.drawText(QRectF(x, y - 18 * scale, kBarW, 16 * scale),
+                     Qt::AlignLeft | Qt::AlignVCenter,
+                     heatmapTitle_.isEmpty()
+                         ? tr("Activity density")
+                         : tr("%1 density").arg(heatmapTitle_));
+
+    // The ramp, sampled the same way the marks are, including the
+    // logarithmic transform, so the key matches what is on the map.
+    for (int i = 0; i < kBarW; ++i) {
+        const float t = static_cast<float>(i) / static_cast<float>(kBarW - 1);
+        const heatmap::Rgb c = heatmap::sample(t);
+        painter.setPen(QColor::fromRgbF(c.r, c.g, c.b));
+        painter.drawLine(x + i, y, x + i, y + kBarH);
+    }
+
+    painter.setFont(tickFont);
+    painter.setPen(QColor(220, 220, 220));
+    painter.drawText(QRectF(x, y + kBarH + 2 * scale, kBarW / 2, 14 * scale),
+                     Qt::AlignLeft, tr("low"));
+    painter.drawText(QRectF(x + kBarW / 2, y + kBarH + 2 * scale, kBarW / 2, 14 * scale),
+                     Qt::AlignRight, tr("high"));
+
+    // State what the top of the ramp means, and whether the scale is
+    // shared. Without this a reader cannot tell whether two maps are
+    // comparable, which is the easiest mistake to make here.
+    const float anchor = heatmapRenderer_->scaleMax();
+    const float ownPeak = heatmapRenderer_->anchorValue();
+    QString scaleText;
+    if (!heatmapRenderer_->usingSharedScale()) {
+        scaleText = tr("to %1 /m (this map only)").arg(anchor, 0, 'g', 3);
+    } else if (anchor > ownPeak * 1.001f) {
+        // The shared anchor comes from a denser type, so this map does
+        // not reach the top of the ramp. Show its own peak too, or the
+        // reader cannot tell how far short it falls.
+        scaleText = tr("to %1 /m (shared) - this map peaks at %2")
+                        .arg(anchor, 0, 'g', 3).arg(ownPeak, 0, 'g', 3);
+    } else {
+        // This map is the densest one computed so far, so both scales
+        // give the same colors. Say so, or switching the setting looks
+        // like it did nothing.
+        scaleText = tr("to %1 /m (shared - densest type so far)")
+                        .arg(anchor, 0, 'g', 3);
+    }
+    painter.drawText(QRectF(x, y + kBarH + 16 * scale, kBarW * 2, 14 * scale),
+                     Qt::AlignLeft, scaleText);
+
+    painter.restore();
 }
 
-void MapWidget::setActivityDensityData(ActivityDensityData data) {
-    pendingDensityData_ = std::move(data);
-    densityUploadPending_ = true;
-    update();  // paintGL() performs the upload with a current context
-}
-
-const std::vector<ActivityDensityLayer>& MapWidget::activityDensityLayers() const {
-    // pendingDensityData_ stays the source of truth so per-layer visibility
-    // survives a re-upload
-    return pendingDensityData_.layers;
-}
-
-void MapWidget::setActivityDensityLayerVisible(size_t index, bool visible) {
-    if (index < pendingDensityData_.layers.size()) {
-        pendingDensityData_.layers[index].visible = visible;
-    }
-    if (activityDensityRenderer_) {
-        activityDensityRenderer_->setLayerVisible(index, visible);
-    }
-    update();
-}
 } // namespace simvis

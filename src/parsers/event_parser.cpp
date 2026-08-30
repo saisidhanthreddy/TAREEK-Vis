@@ -1,4 +1,5 @@
 #include "event_parser.h"
+#include "core/logger.h"
 #include <fstream>
 #include <cstring>
 #include <algorithm>
@@ -91,6 +92,9 @@ inline float fastParseFloat(std::string_view sv) {
     return std::stof(std::string(sv));
 }
 
+// Sentinel for PersonState::openActivity — no activity currently open.
+constexpr uint32_t kNoOpenActivity = 0xFFFFFFFF;
+
 } // anonymous namespace
 
 EventParser::StreamResult EventParser::streamProcessEvents(
@@ -138,6 +142,10 @@ EventParser::StreamResult EventParser::streamProcessEvents(
             uint32_t currentVehicle = 0;           // vehicleId+1 while in a vehicle
             bool legOpen = false;
             bool awaitingActStart = false;         // last emitted trip wants toActTypeId
+
+            // Activity currently in progress, opened by actstart and closed by
+            // the matching actend. index = position in vidx.activities_.
+            uint32_t openActivity = kNoOpenActivity;
         };
         std::vector<PersonState> personStates;
         auto& vidx = result.vehicleIndex;          // trip data goes straight into the index
@@ -153,6 +161,43 @@ EventParser::StreamResult EventParser::streamProcessEvents(
             if (vehicleCount > vidx.driverOfVehicle_.size()) {
                 vidx.driverOfVehicle_.resize(vehicleCount, 0);
             }
+        };
+
+        // Build an ActivityRecord from an actstart/actend line. MATSim writes the
+        // activity's true x/y on these events; when they are absent (the schema
+        // makes them optional) the coordinate is left at the origin and flagged,
+        // so callers can fall back to link geometry.
+        auto makeActivity = [&](const char* data, size_t len, uint32_t personId,
+                                uint16_t actTypeId, TimeMs startMs,
+                                TimeMs endMs) -> ActivityRecord {
+            ActivityRecord act{};
+            act.personId = personId;
+            act.actTypeId = actTypeId;
+            act.startTimeMs = startMs;
+            act.endTimeMs = endMs;
+            act.flags = 0;
+
+            // Leading space is significant: a bare "x" would also match the tail
+            // of a longer attribute name ending in x (e.g. maxSpeed="…").
+            std::string_view xStr = getAttrView(data, len, " x", 2);
+            std::string_view yStr = getAttrView(data, len, " y", 2);
+            if (!xStr.empty() && !yStr.empty()) {
+                act.x = fastParseFloat(xStr);
+                act.y = fastParseFloat(yStr);
+            } else {
+                act.x = 0.0f;
+                act.y = 0.0f;
+                act.flags |= ACT_FLAG_DERIVED_COORD;
+            }
+
+            std::string_view linkStr = getAttrView(data, len, "link", 4);
+            act.linkId = TRIP_NO_LINK;
+            if (!linkStr.empty()) {
+                act.linkId = mutableLinkIds.hasString(linkStr)
+                    ? mutableLinkIds.getId(linkStr)
+                    : mutableLinkIds.intern(linkStr);
+            }
+            return act;
         };
 
         size_t eventCount = 0;
@@ -207,9 +252,24 @@ EventParser::StreamResult EventParser::streamProcessEvents(
                     if (personStr.empty()) continue;
                     uint32_t personId = result.personIds.intern(personStr);
                     growPersonArrays();
-                    personStates[personId].lastActEndType = actStr.empty()
+                    auto& ps = personStates[personId];
+                    uint16_t actTypeId = actStr.empty()
                         ? TRIP_NO_ACT
                         : static_cast<uint16_t>(vidx.actTypeStrings_.intern(actStr));
+                    ps.lastActEndType = actTypeId;
+
+                    // Close the activity opened by the matching actstart. If none
+                    // is open this is the person's first activity of the day —
+                    // it began before the simulation, so record it here with no
+                    // start time. Those would otherwise be lost entirely.
+                    if (ps.openActivity != kNoOpenActivity) {
+                        vidx.activities_[ps.openActivity].endTimeMs = eventTimeMs;
+                        ps.openActivity = kNoOpenActivity;
+                    } else if (actTypeId != TRIP_NO_ACT) {
+                        vidx.activities_.push_back(
+                            makeActivity(data, len, personId, actTypeId,
+                                         ACT_NO_TIME, eventTimeMs));
+                    }
                     continue;
                 }
 
@@ -290,12 +350,27 @@ EventParser::StreamResult EventParser::streamProcessEvents(
                     uint32_t personId = result.personIds.intern(personStr);
                     growPersonArrays();
                     auto& ps = personStates[personId];
+                    uint16_t actTypeId = actStr.empty()
+                        ? TRIP_NO_ACT
+                        : static_cast<uint16_t>(vidx.actTypeStrings_.intern(actStr));
                     if (ps.awaitingActStart && !vidx.personTrips_[personId].empty() &&
-                        !actStr.empty()) {
-                        vidx.personTrips_[personId].back().toActTypeId =
-                            static_cast<uint16_t>(vidx.actTypeStrings_.intern(actStr));
+                        actTypeId != TRIP_NO_ACT) {
+                        vidx.personTrips_[personId].back().toActTypeId = actTypeId;
                     }
                     ps.awaitingActStart = false;
+
+                    // Open an activity; the matching actend closes it. A second
+                    // actstart without an intervening actend would abandon the
+                    // first, so close it defensively at this event's time.
+                    if (actTypeId != TRIP_NO_ACT) {
+                        if (ps.openActivity != kNoOpenActivity) {
+                            vidx.activities_[ps.openActivity].endTimeMs = eventTimeMs;
+                        }
+                        ps.openActivity = static_cast<uint32_t>(vidx.activities_.size());
+                        vidx.activities_.push_back(
+                            makeActivity(data, len, personId, actTypeId,
+                                         eventTimeMs, ACT_NO_TIME));
+                    }
                     continue;
                 }
 
@@ -474,6 +549,10 @@ EventParser::StreamResult EventParser::streamProcessEvents(
             vidx.personTrips_[personId].push_back(trip);
         }
 
+        // Activities still open at end of file are the day's final activity
+        // (the agent is at home and never leaves again). Their endTimeMs stays
+        // ACT_NO_TIME, which reads as "still in progress".
+
         // Finalize vehicle index. The vehicles_ array must cover every interned
         // vehicle id (PersonEntersVehicle/TransitDriverStarts can intern vehicles
         // that produced no movement events; their trajectories stay empty).
@@ -483,6 +562,27 @@ EventParser::StreamResult EventParser::streamProcessEvents(
         result.vehicleIndex.driverOfVehicle_.resize(result.vehicleIds.size(), 0);
         result.eventCount = eventCount;
         result.success = true;
+
+        {
+            size_t derived = 0;
+            std::vector<size_t> perType(vidx.actTypeStrings_.size(), 0);
+            for (const auto& a : vidx.activities_) {
+                if (a.flags & ACT_FLAG_DERIVED_COORD) ++derived;
+                if (a.actTypeId < perType.size()) ++perType[a.actTypeId];
+            }
+            LOG_INFO(QString("EventParser: %1 activities (%2 without event coordinates)")
+                .arg(vidx.activities_.size()).arg(derived));
+
+            // Per-type counts. A heatmap is built per activity type, so these
+            // numbers say which types hold enough data to be worth plotting.
+            for (size_t t = 0; t < perType.size(); ++t) {
+                if (perType[t] == 0) continue;
+                LOG_INFO(QString("  activity type %1: %2")
+                    .arg(QString::fromStdString(vidx.actTypeStrings_.getString(
+                        static_cast<uint32_t>(t))))
+                    .arg(perType[t]));
+            }
+        }
 
     } catch (const std::exception& e) {
         result.success = false;

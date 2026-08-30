@@ -23,6 +23,13 @@ A high-performance desktop application for visualizing MATSim simulation outputs
       <sub>Tracing a selected person's route and activities on the map</sub>
     </td>
   </tr>
+  <tr>
+    <td width="50%" align="center">
+      <img src="assets/screenshots/heatmap_chicago.PNG" width="100%" alt="Activity density heatmap over the Chicago road network" /><br />
+      <sub>Activity density along the road network, measured by driving distance</sub>
+    </td>
+    <td width="50%" align="center"></td>
+  </tr>
 </table>
 
 ## Paper
@@ -232,5 +239,23 @@ TAREEK-Vis is licensed under the [GNU General Public License v3.0](LICENSE).
 | [PugiXML](https://pugixml.org/) | MIT | XML parsing (bundled) |
 | [ZLIB](https://www.zlib.net/) | Zlib License | Gzip decompression |
 | [FFmpeg](https://ffmpeg.org/) | LGPL/GPL | Video recording (optional, external subprocess) |
+
+### Background Map Tiles
+
+The optional background map layers (View → Background Map) stream raster tiles
+from third-party services. TAREEK-Vis does not redistribute these tiles; they
+are fetched directly by the user's machine at display time. Each service
+requires attribution when its imagery is shown, reproduced, or published:
+
+| Layer | Provider | Required attribution |
+|-------|----------|----------------------|
+| OpenStreetMap | [CARTO](https://carto.com/attributions) Voyager basemap, built on OpenStreetMap data | © OpenStreetMap contributors, © CARTO |
+| Satellite | [Esri World Imagery](https://www.arcgis.com/home/item.html?id=10df2279f9684e4a9f6a7f08febac2a9) (ArcGIS Online) | Esri, Maxar, Earthstar Geographics, and the GIS User Community |
+| Topographic | [OpenTopoMap](https://opentopomap.org/) | © OpenStreetMap contributors, © OpenTopoMap (CC-BY-SA) |
+
+If you publish figures, screenshots, or videos produced with a background map
+enabled, include the corresponding attribution in the caption or credits.
+Users are responsible for complying with each provider's terms of use, which
+may restrict commercial or high-volume use.
 
 See [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md) for full license texts.

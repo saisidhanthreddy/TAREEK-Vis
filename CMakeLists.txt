@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.20)
-project(TAREEK-Vis VERSION 1.0.0 LANGUAGES CXX)
+project(TAREEK-Vis VERSION 1.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -26,6 +26,9 @@ set(SOURCES
     src/parsers/counts_parser.cpp
     src/data/network_index.cpp
     src/data/vehicle_index.cpp
+    src/analysis/nkdv_network.cpp
+    src/analysis/nkde_scatter.cpp
+    src/analysis/heatmap_cache.cpp
     src/renderer/gl_renderer.cpp
     src/renderer/network_renderer.cpp
     src/renderer/vehicle_renderer.cpp
@@ -34,8 +37,7 @@ set(SOURCES
     src/renderer/person_route_renderer.cpp
     src/renderer/halo_renderer.cpp
     src/renderer/tile_renderer.cpp
-    src/renderer/activity_density_renderer.cpp
-    src/renderer/activity_density_builder.cpp
+    src/renderer/heatmap_renderer.cpp
     src/ui/main_window.cpp
     src/ui/map_widget.cpp
     src/ui/info_panel.cpp
@@ -60,6 +62,9 @@ set(HEADERS
     src/parsers/counts_parser.h
     src/data/network_index.h
     src/data/vehicle_index.h
+    src/analysis/nkdv_network.h
+    src/analysis/nkde_scatter.h
+    src/analysis/heatmap_cache.h
     src/renderer/gl_renderer.h
     src/renderer/network_renderer.h
     src/renderer/vehicle_renderer.h
@@ -68,8 +73,8 @@ set(HEADERS
     src/renderer/person_route_renderer.h
     src/renderer/halo_renderer.h
     src/renderer/tile_renderer.h
-    src/renderer/activity_density_renderer.h
-    src/renderer/activity_density_builder.h
+    src/renderer/heatmap_renderer.h
+    src/renderer/heatmap_palette.h
     src/core/crs_transform.h
     src/ui/main_window.h
     src/ui/map_widget.h
@@ -84,6 +89,12 @@ set(HEADERS
 
 # Create executable
 add_executable(${PROJECT_NAME} ${SOURCES} ${HEADERS})
+
+# The version lives only in the project() call above. Anything that shows it to
+# a user reads it from here, so a release cannot ship mismatched numbers.
+target_compile_definitions(${PROJECT_NAME} PRIVATE
+    TAREEK_VIS_VERSION="${PROJECT_VERSION}"
+)
 
 # Include directories
 target_include_directories(${PROJECT_NAME} PRIVATE

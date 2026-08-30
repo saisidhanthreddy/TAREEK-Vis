@@ -1,6 +1,7 @@
 # Third-Party Licenses
 
-TAREEK-Vis uses the following third-party libraries and tools:
+TAREEK-Vis uses the following third-party libraries, tools, and online
+services:
 
 ---
 
@@ -69,3 +70,60 @@ restrictive redistribution is needed.
 
 - **Usage**: Graphics rendering via system-provided drivers
 - **No licensing restrictions** apply to the use of the OpenGL API.
+
+---
+
+# Background Map Tile Services
+
+The optional background map layer (View → Background Map) streams raster map
+tiles over HTTPS from the third-party services listed below. These tiles are
+**not** bundled with or redistributed by TAREEK-Vis; they are requested
+directly by the end user's machine when a background layer is enabled, and are
+cached only in memory for the duration of the session.
+
+Each service requires attribution whenever its map imagery is displayed,
+reproduced, or published. If you publish figures, screenshots, or recorded
+videos made with a background map enabled, credit the corresponding provider
+in the caption or credits. Use of these services is subject to each
+provider's own terms, which may limit commercial or high-volume use.
+
+---
+
+## CARTO Basemaps ("OpenStreetMap" layer)
+
+- **Endpoint**: `https://basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}.png`
+- **Provider**: CARTO (Voyager basemap style, rendered from OpenStreetMap data)
+- **Underlying data**: OpenStreetMap, licensed under the
+  [Open Database License (ODbL)](https://www.openstreetmap.org/copyright)
+- **Basemap styles**: BSD 3-Clause / CC-BY 4.0
+  (https://github.com/CartoDB/basemap-styles)
+- **Terms**: https://carto.com/legal/basemap-terms
+- **Required attribution**: © OpenStreetMap contributors, © CARTO
+
+---
+
+## Esri World Imagery ("Satellite" layer)
+
+- **Endpoint**: `https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}`
+- **Provider**: Esri (ArcGIS Online World Imagery service), aggregating imagery
+  from Maxar, Earthstar Geographics, and other sources
+- **Terms**: https://www.esri.com/en-us/legal/terms/web-site-service
+  — permits noncommercial use with proper attribution to Esri; commercial use
+  requires a separate license from Esri.
+- **Required attribution**: Esri, Maxar, Earthstar Geographics, and the GIS
+  User Community
+
+---
+
+## OpenTopoMap ("Topographic" layer)
+
+- **Endpoint**: `https://tile.opentopomap.org/{z}/{x}/{y}.png`
+- **Provider**: OpenTopoMap
+- **Underlying data**: OpenStreetMap
+  ([ODbL](https://www.openstreetmap.org/copyright)) and SRTM elevation data
+- **Cartography license**:
+  [CC-BY-SA 3.0](https://creativecommons.org/licenses/by-sa/3.0/)
+- **Terms**: https://opentopomap.org/about — high-volume use should be
+  arranged with the OpenTopoMap maintainers first.
+- **Required attribution**: © OpenStreetMap contributors, © OpenTopoMap
+  (CC-BY-SA)
