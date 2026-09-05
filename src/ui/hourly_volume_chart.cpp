@@ -3,19 +3,19 @@
 
 #include <QMouseEvent>
 #include <QPainter>
+#include <QFontMetrics>
 #include <QToolTip>
 #include <algorithm>
 
 namespace simvis {
 namespace {
 
-// Room for the y-axis numbers, the upright hour labels and the axis caption.
+// Room for the y-axis numbers and the axis caption. The hour-label band is
+// measured at paint time, since it depends on whether the labels stagger.
 constexpr int kMarginLeft = 34;
 constexpr int kMarginRight = 6;
 constexpr int kMarginTop = 8;
-constexpr int kHourLabelBand = 20;   // upright "1".."24"
 constexpr int kAxisCaptionBand = 14; // "Hour of Day"
-constexpr int kMarginBottom = kHourLabelBand + kAxisCaptionBand;
 
 constexpr int kYTicks = 4;
 
@@ -54,6 +54,13 @@ QSize HourlyVolumeChart::sizeHint() const {
     return QSize(240, 200);
 }
 
+// Hour labels stay horizontal. Where 24 of them will not fit side by side they
+// drop onto two alternating rows rather than turning on their side, which keeps
+// every hour readable without asking anyone to tilt their head.
+static bool needsStaggeredLabels(const QFontMetrics& fm, double slotW) {
+    return fm.horizontalAdvance(QStringLiteral("24")) + 3 > slotW;
+}
+
 int HourlyVolumeChart::hourAt(int x) const {
     const int plotW = width() - kMarginLeft - kMarginRight;
     if (volumes_.size() != 24 || plotW <= 0) return -1;
@@ -68,16 +75,23 @@ void HourlyVolumeChart::paintEvent(QPaintEvent* /*event*/) {
     QPainter p(this);
     p.setRenderHint(QPainter::Antialiasing);
 
+    QFont tickFont = font();
+    tickFont.setPointSize(7);
+    p.setFont(tickFont);
+
+    const QFontMetrics fm(tickFont);
     const int plotW = width() - kMarginLeft - kMarginRight;
-    const int plotH = height() - kMarginTop - kMarginBottom;
+    const double slotW = static_cast<double>(plotW) / 24.0;
+    const bool stagger = needsStaggeredLabels(fm, slotW);
+    const int labelRowH = fm.height();
+    const int tickLen = 3;
+    const int hourLabelBand = (stagger ? 2 : 1) * labelRowH + tickLen + 2;
+
+    const int plotH = height() - kMarginTop - hourLabelBand - kAxisCaptionBand;
     if (plotW < 60 || plotH < 40) return;
 
     const int baseline = kMarginTop + plotH;
     const uint32_t axisMax = niceAxisMax(maxVolume_);
-
-    QFont tickFont = font();
-    tickFont.setPointSize(7);
-    p.setFont(tickFont);
 
     // Horizontal grid with its value, so bar heights can be read off
     for (int i = 0; i <= kYTicks; ++i) {
@@ -91,7 +105,6 @@ void HourlyVolumeChart::paintEvent(QPaintEvent* /*event*/) {
                    QString::number(static_cast<uint32_t>(i) * axisMax / kYTicks));
     }
 
-    const double slotW = static_cast<double>(plotW) / 24.0;
     const double barW = std::max(2.0, slotW * 0.74);
 
     const QColor barColor(panelstyle::kAccent);
@@ -110,15 +123,23 @@ void HourlyVolumeChart::paintEvent(QPaintEvent* /*event*/) {
                        h == hoverHour_ ? hoverColor : barColor);
         }
 
-        // Hour label, upright. 24 horizontal labels do not fit a 280px panel;
-        // turning them keeps every hour readable with room to spare.
-        p.setPen(h == hoverHour_ ? QColor(235, 235, 240) : QColor(150, 150, 155));
-        p.save();
-        p.translate(slotX + slotW / 2.0, baseline + kHourLabelBand - 2);
-        p.rotate(-90);
-        p.drawText(QRectF(0, -slotW / 2.0, kHourLabelBand - 4, slotW),
-                   Qt::AlignLeft | Qt::AlignVCenter, QString::number(h + 1));
-        p.restore();
+        // Hour label, always upright and horizontal. When the slots are too
+        // narrow for 24 side by side, alternate hours drop to a second row
+        // instead of the numbers being turned on their side.
+        const int row = stagger ? (h % 2) : 0;
+        const bool hot = (h == hoverHour_);
+        const double centreX = slotX + slotW / 2.0;
+
+        // A tick per hour ties each number to its own slot, which matters most
+        // when the numbers alternate between two rows.
+        p.setPen(QPen(hot ? QColor(220, 220, 226) : QColor(120, 120, 126), 1));
+        p.drawLine(QPointF(centreX, baseline + 1),
+                   QPointF(centreX, baseline + 1 + tickLen));
+
+        p.setPen(hot ? QColor(235, 235, 240) : QColor(150, 150, 155));
+        p.drawText(QRectF(centreX - slotW, baseline + tickLen + 2 + row * labelRowH,
+                          slotW * 2.0, labelRowH),
+                   Qt::AlignHCenter | Qt::AlignVCenter, QString::number(h + 1));
     }
 
     // Axis line and caption
@@ -129,7 +150,7 @@ void HourlyVolumeChart::paintEvent(QPaintEvent* /*event*/) {
     captionFont.setPointSize(8);
     p.setFont(captionFont);
     p.setPen(QColor(170, 170, 175));
-    p.drawText(kMarginLeft, height() - kAxisCaptionBand, plotW, kAxisCaptionBand,
+    p.drawText(kMarginLeft, baseline + hourLabelBand, plotW, kAxisCaptionBand,
                Qt::AlignHCenter | Qt::AlignVCenter, tr("Hour of Day"));
 }
 
