@@ -1024,12 +1024,17 @@ void MainWindow::loadBinaryFiles() {
             if (!traj) continue;
             
             for (const auto& seg : traj->segments) {
-                // Convert MATSim entry time (ms) to hour of the day (0-23)
-                int hour = static_cast<int>(VehicleIndex::toSeconds(seg.enterTime) / 3600.0f);
-                if (hour >= 0 && hour < 24) {
-                    if (volumes[seg.linkId].empty()) volumes[seg.linkId].assign(24, 0);
-                    volumes[seg.linkId][hour]++;
-                }
+                const float seconds = VehicleIndex::toSeconds(seg.enterTime);
+                if (seconds < 0.0f) continue;
+
+                // MATSim counts seconds from midnight and routinely runs past
+                // 24:00 - this scenario ends at 107999s, hour 29 - so fold back
+                // to hour of day. Truncating at 23 silently dropped every trip
+                // after midnight instead of counting it against the right hour.
+                const int hour = static_cast<int>(seconds / 3600.0f) % 24;
+
+                if (volumes[seg.linkId].empty()) volumes[seg.linkId].assign(24, 0);
+                volumes[seg.linkId][hour]++;
             }
         }
         return volumes;

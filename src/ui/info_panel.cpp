@@ -1,16 +1,12 @@
 #include "info_panel.h"
 #include "panel_style.h"
+#include "hourly_volume_chart.h"
 #include <QScrollBar>
 #include <QHBoxLayout>
 #include <QGridLayout>
 #include <QMouseEvent>
 #include <QVariant>
-#include <QBarSet>
-#include <QBarSeries>
-#include <QChart>
-#include <QChartView>
-#include <QBarCategoryAxis>
-#include <QValueAxis>
+#include <algorithm>
 
 namespace simvis {
 
@@ -376,53 +372,25 @@ void InfoPanel::showLinkInfo(const LinkInfo& info) {
 
     if (info.hourlyVolumes.size() == 24) {
         addDivider();
-        addHeader("Daily Volume (24h)");
+        addHeader("Hourly Volume");
 
-        auto* barSet = new QBarSet("Vehicles");
-        barSet->setColor(QColor(panelstyle::kAccent)); // Matches your theme's blue/accent color
-        
-        uint32_t maxVol = 0;
-        QStringList hours;
-        for (int i = 0; i < 24; ++i) {
-            barSet->append(info.hourlyVolumes[i]);
-            if (info.hourlyVolumes[i] > maxVol) maxVol = info.hourlyVolumes[i];
-            
-            // Only label every 4th hour to prevent crowding the X-axis
-            if (i % 4 == 0) hours << QString::number(i);
-            else hours << ""; 
+        auto* chart = new HourlyVolumeChart();
+        chart->setVolumes(info.hourlyVolumes);
+        contentLayout_->insertWidget(contentLayout_->count() - 1, chart);
+
+        uint32_t total = 0;
+        for (uint32_t v : info.hourlyVolumes) total += v;
+        if (total > 0) {
+            const int peak = static_cast<int>(
+                std::max_element(info.hourlyVolumes.begin(), info.hourlyVolumes.end())
+                - info.hourlyVolumes.begin());
+            addBody(QString("%1 vehicles over the day, busiest %2:00-%3:00")
+                        .arg(total)
+                        .arg(peak, 2, 10, QChar('0'))
+                        .arg((peak + 1) % 24, 2, 10, QChar('0')));
+        } else {
+            addBody("No vehicles recorded on this link.");
         }
-
-        auto* series = new QBarSeries();
-        series->append(barSet);
-        series->setBarWidth(0.8);
-
-        auto* chart = new QChart();
-        chart->addSeries(series);
-        chart->legend()->hide();
-        chart->setBackgroundVisible(false); // Keeps the dark theme background
-        chart->layout()->setContentsMargins(0, 0, 0, 0);
-
-        auto* axisX = new QBarCategoryAxis();
-        axisX->append(hours);
-        axisX->setLabelsColor(Qt::gray);
-        axisX->setGridLineVisible(false);
-        chart->addAxis(axisX, Qt::AlignBottom);
-        series->attachAxis(axisX);
-
-        auto* axisY = new QValueAxis();
-        axisY->setLabelsColor(Qt::gray);
-        axisY->setRange(0, maxVol > 0 ? maxVol : 10);
-        axisY->setLabelFormat("%d");
-        chart->addAxis(axisY, Qt::AlignLeft);
-        series->attachAxis(axisY);
-
-        auto* chartView = new QChartView(chart);
-        chartView->setRenderHint(QPainter::Antialiasing);
-        chartView->setMinimumHeight(220); // Gives the chart enough room to breathe
-        chartView->setStyleSheet("background: transparent;");
-        
-        // Insert right before the trailing stretch
-        contentLayout_->insertWidget(contentLayout_->count() - 1, chartView);
     }
 
     if (info.hasCounts) {
